@@ -1,0 +1,25 @@
+# Build output (both cores)
+build/
+**/build/
+.cache/
+**/CMakeFiles/
+
+# Firmware artifacts
+*.elf
+*.map
+*.bin
+*.hex
+*.list
+*.o
+*.obj
+*.d
+*.su
+
+# Editor / OS
+.vs/
+*.user
+Thumbs.db
+desktop.ini
+.DS_Store
+
+# Keep: CMakeLists.txt, CMakePresets.json, cmake/, flash.ps1, source, docs
