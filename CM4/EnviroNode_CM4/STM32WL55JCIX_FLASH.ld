@@ -46,11 +46,22 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
    they sit ABOVE the stack top (_estack) and are never touched by the C startup
    (.bss zero-fill / .data copy) nor by the downward-growing stack. The event log
    lives there and survives a warm reset (watchdog / software / NRST pin). */
+/* The last two 2 KB pages of CM4's flash region are carved out as EnviroNode
+   non-volatile storage, so the linker can never place code there:
+     0x0801F000 (page 62) — node configuration (interval, calibration, mask)
+     0x0801F800 (page 63) — LoRaWAN OTAA identity (AppKey / DevEUI / JoinEUI)
+   Two separate pages because each is erased before it is rewritten: a config
+   save must never be able to take the OTAA identity with it. The identity lives
+   in flash (not just RTC backup registers) so it survives a full power loss —
+   backup registers only hold up while VBAT does, and VBAT rides VDD here.
+   See Core/WL55JC1/Src/envnode_keystore.c and envnode_config.c. */
 MEMORY
 {
   RAM    (xrw)   : ORIGIN = 0x20000000, LENGTH = 32K - 0x200
   NOINIT (xrw)   : ORIGIN = 0x20007E00, LENGTH = 0x200
-  FLASH   (rx)   : ORIGIN = 0x08000000, LENGTH = 128K
+  FLASH   (rx)   : ORIGIN = 0x08000000, LENGTH = 124K
+  ENVCFG  (r)    : ORIGIN = 0x0801F000, LENGTH = 2K
+  KEYSTORE (r)   : ORIGIN = 0x0801F800, LENGTH = 2K
 }
 
 /* Sections */

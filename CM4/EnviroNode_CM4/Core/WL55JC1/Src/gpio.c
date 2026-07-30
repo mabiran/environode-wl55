@@ -22,7 +22,7 @@
 #include "gpio.h"
 
 /* USER CODE BEGIN 0 */
-
+#include "pins_config.h"    /* EnviroNode pin aliases (docs/PINOUT.md) */
 /* USER CODE END 0 */
 
 /*----------------------------------------------------------------------------*/
@@ -44,35 +44,51 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level — GPIOB control lines start LOW.
-    PB3=AM_REC (D3), PB10=Pi_Wake (D6), PB5=AM_CONFIG (D4). */
-  HAL_GPIO_WritePin(GPIOB, Rec_Pin_Pin|Pi_Wake_Pin|GPIO_PIN_5, GPIO_PIN_RESET);
+  /* PB10 (D6) and PC1 (D7) are deliberately NOT configured here: the inherited
+     Pi_Wake / Pi-5V-enable outputs that drove them are gone, so leaving both at
+     their reset state (analog, no drive) keeps them free for a future sensor —
+     see docs/PINOUT.md "Free pins". */
 
-  /*Configure GPIO pin Output Level — PC1 = Pi 5V power (opto, D7); start LOW=OFF */
-  HAL_GPIO_WritePin(Pin_Ultra_GPIO_Port, Pin_Ultra_Pin, GPIO_PIN_RESET);
-
-  /*Configure GPIO pins : PB3 (AM_REC), PB10 (Pi_Wake), PB5 (AM_CONFIG) */
-  GPIO_InitStruct.Pin = Rec_Pin_Pin|Pi_Wake_Pin|GPIO_PIN_5;
+  /* --- EnviroNode: MAX31865 chip-select (PA4 / Arduino D10), idle HIGH ------ */
+  HAL_GPIO_WritePin(ENV_RTD_CS_Port, ENV_RTD_CS_Pin, GPIO_PIN_SET);
+  GPIO_InitStruct.Pin = ENV_RTD_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_Init(ENV_RTD_CS_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : Pin_Ultra_Pin */
-  GPIO_InitStruct.Pin = Pin_Ultra_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(Pin_Ultra_GPIO_Port, &GPIO_InitStruct);
+  /* --- EnviroNode: pulse inputs -------------------------------------------
+     Rain tipping bucket (PB3 / D3) and the Davis 7911 wind-speed contact
+     (PB14 / A4) are dry contacts to GND: internal pull-up, interrupt on the
+     falling edge, and the bounce is filtered in software (pulse_counter.c).
+     An external 10 k pull-up is recommended on the anemometer line because its
+     cable is 12 m long — the internal ~40 k works but is less immune to noise
+     (docs/PINOUT.md). */
+  GPIO_InitStruct.Pin = ENV_RAIN_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(ENV_RAIN_Port, &GPIO_InitStruct);
 
-  /* KoreroNet: status LED output on PC2 (Arduino D8, free Grove "D8" socket).
+  GPIO_InitStruct.Pin = ENV_WIND_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
+  HAL_GPIO_Init(ENV_WIND_Port, &GPIO_InitStruct);
+
+  /* EXTI3 = rain (PB3), EXTI15_10 = wind (PB14). Low priority: the handlers only
+     bump a counter, and they must never delay the UART console. */
+  HAL_NVIC_SetPriority(ENV_RAIN_EXTI_IRQn, 3, 0);
+  HAL_NVIC_EnableIRQ(ENV_RAIN_EXTI_IRQn);
+  HAL_NVIC_SetPriority(ENV_WIND_EXTI_IRQn, 3, 0);
+  HAL_NVIC_EnableIRQ(ENV_WIND_EXTI_IRQn);
+
+  /* Status LED output on PC2 (Arduino D8, free Grove "D8" socket).
      Start LOW = off. Driven with brief low-duty pulses by Status_Led_Tick(). */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_2, GPIO_PIN_RESET);
-  GPIO_InitStruct.Pin = GPIO_PIN_2;
+  HAL_GPIO_WritePin(STATUS_LED_Port, STATUS_LED_Pin, GPIO_PIN_RESET);
+  GPIO_InitStruct.Pin = STATUS_LED_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(STATUS_LED_Port, &GPIO_InitStruct);
 
 }
 

@@ -29,33 +29,58 @@
 #define CHARGE_CONFIRM_MS            (5000u)     /* must hold for this long */
 
 
-/* --- RPi wake timings --- */
-#define RPI_WAKE_DELAY_MS   (60000u)
-#define RPI_WAKE_PULSE_MS   (200u)
+/* ============================================================================
+   EnviroNode-WL55 sensor pins  (ground truth: docs/PINOUT.md)
+   NUCLEO-WL55JC1 + Seeed Grove Base Shield V2.
 
-/* --- pin alias (map User Label “RPISwitch” in .ioc) --- */
+     Grove "D3" socket (D3+D4 = PB3+PB5) -> rain reed + anemometer reed
+     Arduino SPI  (D13/D12/D11 + D10)    -> MAX31865 PT1000 front-end
+     Arduino A0/A1/A3/A4                 -> leaf / soil / wind-vane / battery
+       A0 = Decagon LWS leaf wetness (3-wire analog, ratiometric output)
+     Grove I2C sockets (D14/D15)         -> I2C2: BME280 #1 + INA219
+     Board pins PA9/PA10                 -> I2C1: BME280 #2
+   ========================================================================== */
 
-/* Grove connector grouping (NUCLEO-WL55JC1 + Seeed Base Shield V2):
-   - Grove "D3" (D3+D4) -> AudioMoth : AM_REC (D3/PB3) + AM_CONFIG (D4/PB5)
-   - Grove "D6" (D6+D7) -> Pi        : Pi_Wake (D6/PB10) + Pi 5V power (D7/PC1) */
+/* MAX31865 chip-select — Arduino D10 (PA4). Idle HIGH. */
+#define ENV_RTD_CS_Port       GPIOA
+#define ENV_RTD_CS_Pin        GPIO_PIN_4
 
-#define RPI_WAKE_GPIO_Port   GPIOB
-#define RPI_WAKE_Pin         GPIO_PIN_10   // Arduino D6  (Grove "D6" -> Pi)
-#define AM_CONFIG_Port   	 GPIOB    //Third wire (Black)
-#define AM_CONFIG_Pin		 GPIO_PIN_5    // Arduino D4  (Grove "D3" -> AudioMoth)
-#define AM_REC_Port    		 GPIOB		//Fourth wire (White)
-#define AM_REC_Pin			 GPIO_PIN_3    // Arduino D3  (Grove "D3" -> AudioMoth)
+/* Tipping-bucket rain gauge — Arduino D3 (PB3), EXTI3, pull-up, falling edge. */
+#define ENV_RAIN_Port         GPIOB
+#define ENV_RAIN_Pin          GPIO_PIN_3
+#define ENV_RAIN_EXTI_IRQn    EXTI3_IRQn
 
-/* --- Raspberry Pi 5V power supply enable (optocoupler) ---
-   PC1 = Arduino D7 on the NUCLEO-WL55JC1.  HIGH = supply ON, LOW = OFF.
-   Rides on the same Grove "D6" connector as Pi_Wake (D6+D7) -> Pi. */
-#define PI_PWR_Port          GPIOC
-#define PI_PWR_Pin           GPIO_PIN_1
+/* Anemometer (wind speed) — Arduino **A4** (PB14), EXTI14, pull-up, falling edge.
+   On an analog-capable pin on purpose: it puts the speed contact on A4 right next
+   to the direction wiper on A3, so the Davis 7911's single 4-wire cable lands on
+   ONE Grove socket (A3+A4 = wiper + contact, plus VCC and GND). A4 is used as a
+   plain digital input here — no ADC involved. Moved from PB5/D4 on 2026-07-30. */
+#define ENV_WIND_Port         GPIOB
+#define ENV_WIND_Pin          GPIO_PIN_14
+#define ENV_WIND_EXTI_IRQn    EXTI15_10_IRQn
+
+/* --- Davis 7911 anemometer wiring (datasheet DS7911 Rev G) -----------------
+     Yellow  pot supply voltage        -> 3V3
+     Red     ground                    -> GND
+     Green   direction pot wiper (20k) -> A3 = PB4 = ADC_IN3
+     Black   speed contact to ground   -> A4 = PB14 = EXTI14 (digital, pull-up)
+   Direction is linear: 0 ohm = 0 deg (north), 10 k = 180 deg (south), 20 k = 360.
+   Speed: one contact closure per revolution, 1 Hz = 2.25 mph (see
+   pulse_counter.h). Recommended external parts — no transistor needed:
+     10 k  pull-up   A4 -> 3V3   (noise immunity over the 12 m cable)
+     1 M   pull-down A3 -> GND   (defines the vane's dead band as north)
+     100 nF          A4 -> GND   (optional RC debounce)                        */
+
+/* PB10 (D6) and PC1 (D7) are FREE — the inherited Raspberry-Pi wake / 5V-enable
+   lines that used to own them are gone (no Pi in this project). Left unlisted on
+   purpose so a future sensor claims them via docs/PINOUT.md, not by accident. */
 
 /* --- Status LED (external) — free Grove "D8" socket, pin PC2 = Arduino D8 ---
    HIGH = LED on. The firmware emits brief, low-duty pulses encoding system state
    (Status_Led_Tick in main.c) so the LED is on only ~30 ms per pulse => minimal
-   power. D8 (PC2) + D9 (PA9) are the only fully-free digital Grove socket. */
+   power. NOTE the Grove "D8" socket carries D8+D9 = PC2+PA9, and PA9 is I2C1 SCL
+   for BME280 #2 (docs/PINOUT.md) — the socket is NOT free for a two-wire Grove
+   module, only for this single-pin LED. */
 #define STATUS_LED_Port      GPIOC
 #define STATUS_LED_Pin       GPIO_PIN_2
 #define STATUS_LED_CHARGE_A  (-0.10f)   /* battery current <= this (A) => "charging" */

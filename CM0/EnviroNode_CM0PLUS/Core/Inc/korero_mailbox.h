@@ -20,9 +20,9 @@
   *       single consumer => no locking needed.
   *
   *  3) Downlink channel (CM0+ -> CM4):
-  *       CM0+ stores LoRaWAN downlinks the gateway sends (e.g. a daily
-  *       timetable) in a small ring; CM4 serves them to the Pi on
-  *       `nucleo get downlink` and applies any timetable to its own scheduler.
+  *       CM0+ stores LoRaWAN downlinks the gateway sends (sensor-set config
+  *       strings, FPort-10 commands) in a small ring; CM4 drains it from its
+  *       main loop in EnvNode_DrainDownlinks() and applies each frame.
   *
   * IMPORTANT: keep this file byte-for-byte identical in the CM4 and CM0+
   * projects, and keep KORERO_MB_ADDR reserved in CM0+'s STM32WL55JCIX_FLASH.ld.
@@ -75,8 +75,9 @@ typedef struct
 
   /* ---- downlink channel: CM0+ -> CM4 (gateway -> node config push) ----
      CM0+ stores each received LoRaWAN downlink (port + bytes) at dl_head; CM4
-     drains from dl_tail on `nucleo get downlink`, serves the text to the Pi and
-     applies any timetable to its own scheduler. Single producer (CM0+) / single
+     drains from dl_tail in EnvNode_DrainDownlinks() and applies it — a payload
+     starting with '{' is a sensor-set config string, anything else on FPort 10
+     is a binary command (see docs/PAYLOAD.md). Single producer (CM0+) / single
      consumer (CM4) => no locking. If more than KORERO_DL_SLOTS arrive before CM4
      drains, the oldest are overwritten (newest config wins). */
   volatile uint32_t dl_head;                          /* CM0+ write index       */
@@ -87,23 +88,27 @@ typedef struct
 
   /* ---- device identity: CM0+ -> CM4 ----
      CM0+ writes its active DevEUI here at init and after key provisioning, then
-     sets deveui_ready=1, so CM4 can serve it to the Pi on `nucleo deveui`
+     sets deveui_ready=1, so CM4 can print it on `nucleo deveui` / `info`
      without a reset / boot-log parse. */
   volatile uint32_t deveui_ready;     /* 0 until dev_eui_now is populated         */
   volatile uint8_t  dev_eui_now[8];   /* big-endian DevEUI the stack is using     */
 
-  /* ---- Pi 5V power request: CM0+ -> CM4 ----
-     The user buttons live on CM0+ but the Pi power optocoupler (PC1) is on CM4.
-     On B1/B2 press CM0+ sets pi_pwr_on (1=ON, 0=OFF) then bumps pi_pwr_seq; CM4
-     applies it to PC1 on its next poll. */
+  /* ---- legacy B1/B2 button channel: CM0+ -> CM4 (inherited, never read) ----
+     KoreroNet used these two fields to let the user buttons (wired to CM0+)
+     switch the Raspberry Pi's 5V optocoupler on PC1 (owned by CM4). EnviroNode
+     has no Pi and CM4 no longer acts on them — it only zeroes them at init.
+     They MUST stay anyway: CM0+ still writes them on a button press, and this
+     struct is a shared memory ABI, so deleting them here would shift `joined`
+     by 8 bytes and silently break join reporting. Reclaim them only by editing
+     both copies of this header together. */
   volatile uint32_t pi_pwr_seq;       /* CM0+ bumps on each B1/B2 press           */
-  volatile uint8_t  pi_pwr_on;        /* 1 => request Pi 5V ON (B1), 0 => OFF (B2)*/
+  volatile uint8_t  pi_pwr_on;        /* 1 = B1 pressed, 0 = B2; ignored by CM4   */
 
   /* ---- LoRaWAN join status: CM0+ -> CM4 ----
      CM0+ sets joined=1 in OnJoinRequest on a successful join, 0 on failure. CM4
-     polls it and, on each change, emits "JOINED"/"JOIN FAILED" to the Pi on
-     USART1 (the join result is otherwise only logged to the VCP trace ring, so
-     the Pi's wait_joined() never saw it); `nucleo lorawan status` reports it. */
+     polls it and, on each change, emits "JOINED"/"JOIN FAILED" on the console
+     (the join result is otherwise only logged to the CM0+ trace ring, which is
+     noisy to watch); `info` and `nucleo lorawan status` also report it. */
   volatile uint32_t joined;           /* 1 = radio has joined TTN, 0 = not joined  */
 } KoreroMailbox_t;
 

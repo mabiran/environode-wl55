@@ -60,16 +60,14 @@ void Error_Handler(void);
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/
+/* Only the LSE crystal pins are labelled here. The inherited KoreroNet labels
+   (Rec_Pin PB3, Pin_Ultra PC1, Pi_Wake PB10) are gone with the AudioMoth/Pi
+   code that drove them; PB3 is now the rain gauge input and is named in
+   pins_config.h, PC1/PB10 are free (docs/PINOUT.md). */
 #define RCC_OSC32_IN_Pin GPIO_PIN_14
 #define RCC_OSC32_IN_GPIO_Port GPIOC
-#define Rec_Pin_Pin GPIO_PIN_3
-#define Rec_Pin_GPIO_Port GPIOB
 #define RCC_OSC32_OUT_Pin GPIO_PIN_15
 #define RCC_OSC32_OUT_GPIO_Port GPIOC
-#define Pin_Ultra_Pin GPIO_PIN_1
-#define Pin_Ultra_GPIO_Port GPIOC
-#define Pi_Wake_Pin GPIO_PIN_10
-#define Pi_Wake_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

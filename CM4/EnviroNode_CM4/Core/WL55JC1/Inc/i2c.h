@@ -32,12 +32,18 @@ extern "C" {
 
 /* USER CODE END Includes */
 
+extern I2C_HandleTypeDef hi2c1;
 extern I2C_HandleTypeDef hi2c2;
 
 /* USER CODE BEGIN Private defines */
-
+/* EnviroNode: two I2C buses because both BME280s answer at 0x76/0x77.
+     I2C1 = PA9 SCL / PA10 SDA  -> hand-wired to the board pins (BME280 #2)
+     I2C2 = PA12 SCL / PA11 SDA -> Arduino D15/D14, i.e. the Grove shield's
+                                   I2C sockets (BME280 #1 + INA219)
+   See docs/PINOUT.md. */
 /* USER CODE END Private defines */
 
+void MX_I2C1_Init(void);
 void MX_I2C2_Init(void);
 
 /* USER CODE BEGIN Prototypes */

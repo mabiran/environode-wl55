@@ -125,6 +125,21 @@ env_status_t envnode_sensors_init(void);
  */
 env_status_t envnode_sensors_sample(sensor_readings_t *out);
 
+/**
+ * @brief  Same as envnode_sensors_sample(), but leaves the rain/wind
+ *         accumulators running — for the console's `sensors` command, which
+ *         must not consume the interval the next uplink is going to report.
+ */
+env_status_t envnode_sensors_peek(sensor_readings_t *out);
+
+/**
+ * @brief  Bitmask of the drivers that came up at init (for the console's
+ *         `nucleo sensors` diagnostic).
+ *   b0 BME280 #1 (I2C2) · b1 BME280 #2 (I2C1) · b2 MAX31865 · b3 analog ·
+ *   b4 pulse counters · b5 INA219
+ */
+uint8_t envnode_sensors_present(void);
+
 #ifdef __cplusplus
 }
 #endif

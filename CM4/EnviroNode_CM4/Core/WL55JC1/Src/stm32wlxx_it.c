@@ -22,6 +22,9 @@
 #include "stm32wlxx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "pins_config.h"                 /* ENV_RAIN_Pin / ENV_WIND_Pin       */
+#include "sensors/pulse_counter.h"       /* pulse_rain_isr / pulse_wind_isr   */
+#include "rtc.h"                         /* hrtc — RTC wake-up from STOP2     */
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -200,6 +203,39 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
+  * @brief This function handles the RTC wake-up timer interrupt.
+  *
+  * The only job is to exist: it is what ends a STOP2 nap
+  * (envnode_power.c). The HAL clears the flag and calls the
+  * HAL_RTCEx_WakeUpTimerEventCallback, which this firmware does not override
+  * because nothing needs doing beyond waking up.
+  */
+void RTC_WKUP_IRQHandler(void)
+{
+  HAL_RTCEx_WakeUpTimerIRQHandler(&hrtc);
+}
+
+/**
+  * @brief This function handles EXTI line3 interrupt — rain tipping bucket (PB3).
+  */
+void EXTI3_IRQHandler(void)
+{
+  HAL_GPIO_EXTI_IRQHandler(ENV_RAIN_Pin);
+}
+
+/**
+  * @brief This function handles EXTI lines [15:10] — Davis 7911 wind-speed
+  *        contact on PB14 (Arduino A4).
+  *
+  * PB14 is the only EXTI source in the 10..15 group on this board, so there is
+  * nothing to disambiguate here.
+  */
+void EXTI15_10_IRQHandler(void)
+{
+  HAL_GPIO_EXTI_IRQHandler(ENV_WIND_Pin);
+}
+
+/**
   * @brief This function handles USART1 Interrupt.
   */
 void USART1_IRQHandler(void)
@@ -228,5 +264,20 @@ void USART2_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+
+/**
+  * @brief  GPIO EXTI line detection callback — routes the rain/wind edges to the
+  *         pulse counters. Both handlers only touch volatile counters, so they
+  *         stay short enough to run at low priority alongside the UART console.
+  * @param  GPIO_Pin  pin that triggered the interrupt.
+  */
+void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
+{
+  switch (GPIO_Pin) {
+    case ENV_RAIN_Pin: pulse_rain_isr(); break;   /* PB3 / Arduino D3 */
+    case ENV_WIND_Pin: pulse_wind_isr(); break;   /* PB5 / Arduino D4 */
+    default: break;
+  }
+}
 
 /* USER CODE END 1 */

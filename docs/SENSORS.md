@@ -1,19 +1,32 @@
 # EnviroNode-WL55 — Sensor Bring-up Guide
 
 How each measurement is wired, driven, and calibrated. Cross-reference
-[PINOUT.md](PINOUT.md) (interfaces/pins) and [PAYLOAD.md](PAYLOAD.md) (on-air).
+[PINOUT.md](PINOUT.md) (interfaces/pins), [PAYLOAD.md](PAYLOAD.md) (on-air) and
+[CONFIG.md](CONFIG.md) (which sensors are switched on).
 Drivers live in `CM4/EnviroNode_CM4/Core/WL55JC1/{Inc,Src}/sensors/`.
 
-> **State:** skeletons. The pulse counter is functionally complete; the BME280,
-> MAX31865 and ADC drivers have concrete APIs + register maps but stubbed bodies
-> (`ENV_NOTIMPL`) to be filled in Phase 2 after the `.ioc` exists. None are wired
-> into `CMakeLists.txt` yet, so the build stays green until you add them.
+Each section names its **config key** — the token that selects that sensor in the
+brace configuration string, e.g. `{T1,T2,ST,60}`.
+
+> **State: implemented.** All four drivers are complete, compiled into the CM4
+> image, and driven by `envnode_sensors_sample()`. They have not yet been run
+> against real sensors — bench-test each one with `nucleo sensors` on the ST-Link
+> console before trusting a field deployment.
+>
+> Console: `nucleo sensors` prints one full frame (non-destructive — it does not
+> consume the rain/wind interval), `nucleo uplink now` sends the 30-byte frame,
+> `nucleo set {…}` (or a bare `{…}` line) selects the sensor set and interval,
+> `nucleo interval <min>` changes just the uplink period, `info` shows the LoRaWAN
+> identity, the canonical config string, and which drivers came up at boot.
 
 ---
 
 ## 1–2 · Air temp / humidity / pressure — 2× BME280 (`bme280.{h,c}`)
-- **Bus:** BME280 #1 on **I²C1** (`hi2c1`), #2 on **I²C2** (`hi2c2`). Two buses
-  because both chips answer at `0x76`/`0x77`.
+- **Config keys:** `T1` = air1 (I²C2 / shield) · `T2` = air2 (I²C1 / board pins).
+- **Bus:** BME280 #1 ("air1") on **I²C2** (`hi2c2`, PA12/PA11 — the Grove
+  shield's I²C sockets), #2 ("air2") on **I²C1** (`hi2c1`, PA9/PA10 — wired
+  straight to the board pins). Two buses because both chips answer at
+  `0x76`/`0x77`; `bme280_init_autoaddr()` probes both addresses on each bus.
 - **Config:** verify chip id `0x60`; soft-reset (`0xB6`→`0xE0`); load the
   calibration blocks (`0x88..0xA1`, `0xE1..0xF0`); `ctrl_hum` osrs_h ×1, `ctrl_meas`
   osrs_t/p ×1, **forced mode** (sample-on-demand → low power), filter off.
@@ -23,27 +36,93 @@ Drivers live in `CM4/EnviroNode_CM4/Core/WL55JC1/{Inc,Src}/sensors/`.
   the two sensors agree within tolerance.
 
 ## 3 · Soil moisture — analog probe (`analog_sensors.{h,c}`)
+- **Config key:** `SM`.
 - **Interface:** ADC channel. High output impedance → use a **long ADC sampling
   time**.
 - **On-air:** raw 12-bit counts (curve applied off-node or via `set_cal`).
 - **Calibration:** two-point (air-dry vs saturated / in-water) → map counts to
   %VWC per probe type.
 
-## 4 · Leaf wetness — resistive grid (`analog_sensors.{h,c}`)
-- **Interface:** ADC channel (ratiometric). Long sampling time.
-- **Calibration:** dry vs wet reference; often reported as a raw index/permille.
+## 4 · Leaf wetness — **Decagon LWS** (`analog_sensors.{h,c}`)
+- **Config key:** `LW`. **Pin:** ADC_IN5 — PB1, Arduino **A0** (Grove A0 socket).
+- **Sensor:** Decagon Devices **LWS**, renamed **PHYTOS 31** when Decagon became
+  METER Group; METER's PHYTOS 31 manual covers this sensor [R11].
+- **It is dielectric (capacitive), not a resistive grid.** It measures the
+  dielectric constant of a ~1 cm zone above its upper surface — water (ε≈80) and
+  ice (ε≈5) against air (ε≈1). Water does **not** need to bridge two traces,
+  which is why the sensor needs no painting and no per-unit calibration, and why
+  units are interchangeable. It also detects frost (reading lower than liquid
+  water). *(This section previously said "resistive grid" — wrong sensor class.)*
+- **Excitation: 2.5–5.0 VDC**, hard limits [R11]. **3.3 V is in spec**, so the
+  board's 3V3 rail drives it directly with no level shifting. There is no
+  "typical" excitation voltage — METER prints *Typical: NA*.
+- **Current:** ~2 mA at 2.5 V, 7–8 mA at 5 V. At 3.3 V ≈ 3.5–4 mA
+  (**interpolated, not a manufacturer figure**).
+- **Output:** single-ended DC analog voltage against the sensor ground.
+  **Ratiometric-ish** — METER: *"the sensor does not have a voltage regulator …
+  the output will be somewhat proportional to the excitation"*. So **the ratio is
+  trustworthy, an absolute mV number is not**: any published threshold must be
+  rescaled to the excitation actually used.
+- **Range:** **10 %–50 % of excitation**, dry→wet. At 3 V the legacy Decagon spec
+  gives 320–1000 mV; the headline figure across the whole excitation range is
+  300–1250 mV.
+- **Expected at 3.3 V, 12-bit, Vref 3.3 V:** dry ≈ **430–450 counts**
+  (Decagon quotes **445 counts dry**, ~1400 counts fully wet). A clean dry sensor
+  reading outside ~410–470 counts means the wiring, the sensor, or the
+  "Vex = Vref" assumption is wrong.
+- **On air:** raw counts, u16 at offset 16 — no thresholding on the node. The
+  console prints counts **and** mV so a reading can be compared to the datasheet.
+- **Wiring — check the colours before applying power.** The two generations swap
+  colours that exist in both:
+
+  | Function | **LWS** (older) | **PHYTOS 31** | Goes to |
+  |---|---|---|---|
+  | Excitation | **white** | brown | 3V3 |
+  | Analog output | **red** | orange | **A0** (PB1) |
+  | Ground | bare/clear | bare/clear | GND |
+
+- **⚠️ Excitation should be pulsed, not continuous.** METER intends the sensor for
+  loggers that "provide short excitation pulses": ≥ **10 ms** settling, then
+  sample. Continuous excitation from the Grove socket's always-on VCC costs
+  ≈ 4 mA × 24 h ≈ **91 mAh/day** — acceptable on the bench, not on a solar node.
+  Switching it needs a high-side load switch (**not** a GPIO: ~4 mA droops a
+  push-pull output by 0.1–0.2 V ≈ 3–6 %, and the wet threshold sits only ~3 %
+  above dry). **Not implemented — open item.**
+- **Deployment:** electrodes facing **up**, ~45° from horizontal, pole-ward
+  facing, clear of irrigation. Clean with water only; reapply UV protectant every
+  ~45 days (yellowing is expected). **No IP rating is published** by Decagon or
+  METER — do not quote one.
+- **No mV→water-quantity transfer function exists.** It is a threshold/duration
+  sensor; no accuracy or repeatability figure is published for either generation.
 
 ## 5 · Battery voltage — divider (`analog_sensors.{h,c}`)
+- **Config key:** none — battery is **not selectable** and is measured on every
+  cycle whatever the sensor set says (you cannot afford to lose it remotely).
 - **Interface:** ADC via resistor divider. `Vbatt = Vadc × BATT_DIVIDER_RATIO`.
 - **Set** `BATT_DIVIDER_RATIO` to your resistors; verify against a DMM.
 - **On-air:** millivolts (u16), always sent.
 
-## 6 · Wind direction — vane potentiometer (`analog_sensors.{h,c}`)
-- **Interface:** ADC. `deg = counts/4095 × 360 + vane_offset`, wrapped 0–360.
-- **Calibration:** `set_winddir_offset` (FPort 10) aligns the vane's electrical
-  zero to true/magnetic north.
+## 6 · Wind direction — **Davis 7911** vane potentiometer (`analog_sensors.{h,c}`)
+- **Config key:** `WD` (shares the `SENS_OK_WIND` status bit with `WS`).
+  **Pin:** ADC_IN3 — PB4, Arduino **A3**.
+- **Sensor:** the direction half of the **Davis 7911** (datasheet DS7911 Rev G,
+  [R12]) — a wind vane on a **20 kΩ potentiometer**.
+- **Datasheet output:** *"Variable resistance 0–20 K; 10 K = south, 180°"* — linear,
+  0 Ω = 0° (north), 20 kΩ = 360°.
+- **Interface:** the pot **is** the divider — yellow to 3V3, red to GND, green
+  (wiper) to A3. `deg = counts/4095 × 360 + vane_offset`, wrapped 0–360.
+- **Dead band:** the wiper leaves the track over a small arc at the 0°/360°
+  crossover; unloaded, the ADC input floats and reads noise there. A **1 MΩ
+  pull-down** on the wiper pins that arc to ~0 V ⇒ 0° = north, which is where the
+  dead band physically is — so the failure mode degrades to the right answer.
+  1 MΩ against a 20 kΩ pot costs ≈ 0.5 % ≈ 2° worst case (mid-scale), inside the
+  sensor's own ±7°. A 100 kΩ pull-down would cost ~17° — too much.
+- **Accuracy / resolution:** ±7°, 1°.
+- **Calibration:** `set_winddir_offset` (downlink 0x05) aligns the vane's
+  electrical zero to true/magnetic north.
 
 ## 7 · Soil temperature — PT1000 via MAX31865 (`max31865.{h,c}`)
+- **Config key:** `ST`.
 - **Interface:** **SPI1** (`hspi1`) + a CS GPIO; optional DRDY on EXTI.
 - **Critical:** **Rref = 4.02 kΩ** for PT1000 (`MAX31865_RREF`), not 430 Ω. Set
   `MAX31865_RTD_NOMINAL = 1000`. Choose 2/3/4-wire to match the probe.
@@ -54,30 +133,61 @@ Drivers live in `CM4/EnviroNode_CM4/Core/WL55JC1/{Inc,Src}/sensors/`.
 - **Faults:** on the RTD fault bit, read/clear `max31865_read_fault()`.
 
 ## 8 · Rain — tipping bucket (`pulse_counter.{h,c}`)
-- **Interface:** reed switch → GPIO **EXTI**. Debounced in `pulse_rain_isr`
-  (`PULSE_DEBOUNCE_MS`).
+- **Config key:** `R`. **Edge-counted → the node must stay awake while `R` is
+  selected** (see [CONFIG.md](CONFIG.md); STOP2 sleep itself is Phase 5).
+- **Interface:** reed switch on **PB3 (D3)** → **EXTI3**, internal pull-up,
+  falling edge. Debounced in `pulse_rain_isr` (`RAIN_DEBOUNCE_MS` = 100 ms — a
+  bucket cannot physically tip faster than that).
 - **Calibration:** `RAIN_MM_PER_TIP` (0.2794 mm for a 0.011″ bucket — set to yours).
 
-## 9 · Wind speed — anemometer (`pulse_counter.{h,c}`)
-- **Interface:** reed/hall → GPIO **EXTI** (or a TIM in external-counter mode for
-  high rates). Debounced in `pulse_wind_isr`, which also tracks the shortest gap
-  for **gust**.
-- **Calibration:** `ANEMO_MS_PER_HZ` (per your anemometer's Hz→speed spec).
+## 9 · Wind speed — **Davis 7911** anemometer (`pulse_counter.{h,c}`)
+- **Config key:** `WS` (carries the gust field too). **Edge-counted → the node
+  must stay awake while `WS` is selected.**
+- **Sensor:** the speed half of the **Davis 7911** — datasheet calls it a *"solid
+  state magnetic sensor"* whose output is a **contact closure to ground**, one per
+  revolution. Measured cold: open circuit ↔ ~100 Ω closed.
+- **Interface:** **PB14 (Arduino A4)** → **EXTI14**, internal pull-up, falling
+  edge. Debounced with `WIND_DEBOUNCE_MS` = 5 ms (resolves 200 Hz ≫ the sensor's
+  89 m/s ≈ 88 Hz ceiling).
+- **On an analog-capable pin on purpose:** A4 sits next to the direction wiper on
+  A3, so the 7911's single 4-wire cable lands on **one Grove socket** (A3 + A4 +
+  VCC + GND). A4 is used as a plain digital input — the battery divider moved to
+  **A5** to free it. *(Was PB5/D4 before 2026-07-30.)*
+- **Calibration — from the datasheet, not a guess:**
+  `V = P(2.25/T)` with V in **mph**, P = pulses, T = seconds ⇒ **1 Hz = 2.25 mph**.
+  Cross-checks against the datasheet's *"1600 rev/hr = 1 mph"* (0.444 Hz per mph).
+  Converted once, in `pulse_counter.h`:
+  `ANEMO_MS_PER_HZ = 2.25 × 0.44704 = 1.00584` m/s per Hz.
+  ⚠️ The previous generic default of **0.34 under-read this sensor by 3×**.
+- **Range / accuracy:** 0.5–89 m/s; ±1 m/s or ±5 %, whichever is greater;
+  resolution 0.1 m/s.
+- **Gust:** pulses are bucketed into rolling `GUST_WINDOW_MS` (3 s) windows and
+  the fullest bucket of the interval is reported — the WMO 3-second gust. This
+  replaced "shortest gap seen", which one bounced edge could spike into a
+  nonsense gust. (Davis's own console instead counts revolutions over a 2.25 s
+  window, which is why 2.25 appears in the formula above.)
+- **Cable:** 4-conductor 26 AWG, 12 m attached, RJ-11 plug. Recommended maximum
+  42 m sensor-to-logger; beyond that the maximum *recordable* speed falls, though
+  accuracy does not. A **10 kΩ external pull-up** to 3V3 is recommended over the
+  internal ~40 kΩ because of that cable length.
 
 ---
 
-## Measurement → driver → field → payload offset
+## Key → measurement → driver → field → payload offset
 
-| Measurement | Driver | `sensor_readings_t` field | Uplink off (FPort 1) |
-|---|---|---|---|
-| Air A temp/RH/press | `bme280` (I²C1) | `air1_temp_c` / `air1_rh_pct` / `air1_press_hpa` | 4 / 6 / 7 |
-| Air B temp/RH/press | `bme280` (I²C2) | `air2_temp_c` / `air2_rh_pct` / `air2_press_hpa` | 9 / 11 / 12 |
-| Soil moisture | `analog_sensors` | `soil_moist_raw` | 14 |
-| Leaf wetness | `analog_sensors` | `leaf_wet_raw` | 16 |
-| Soil temperature | `max31865` | `soil_temp_c` | 18 |
-| Wind speed / dir / gust | `pulse_counter` / `analog_sensors` | `wind_speed_ms` / `wind_dir_deg` / `wind_gust_ms` | 20 / 22 / 24 |
-| Rain tips / mm | `pulse_counter` | `rain_tips` / `rain_mm` | 26 / 28 |
-| Battery | `analog_sensors` | `batt_v` | 2 (always) |
+| Key | Measurement | Driver | `sensor_readings_t` field | Uplink off (FPort 1) |
+|---|---|---|---|---|
+| `T1` | Air A temp/RH/press | `bme280` (**I²C2**, shield) | `air1_temp_c` / `air1_rh_pct` / `air1_press_hpa` | 4 / 6 / 7 |
+| `T2` | Air B temp/RH/press | `bme280` (**I²C1**, board pins) | `air2_temp_c` / `air2_rh_pct` / `air2_press_hpa` | 9 / 11 / 12 |
+| `SM` | Soil moisture | `analog_sensors` | `soil_moist_raw` | 14 |
+| `LW` | Leaf wetness | `analog_sensors` | `leaf_wet_raw` | 16 |
+| `ST` | Soil temperature | `max31865` | `soil_temp_c` | 18 |
+| `WS` | Wind speed / gust | `pulse_counter` | `wind_speed_ms` / `wind_gust_ms` | 20 / 24 |
+| `WD` | Wind direction | `analog_sensors` | `wind_dir_deg` | 22 |
+| `R` | Rain tips / mm | `pulse_counter` | `rain_tips` / `rain_mm` | 26 / 28 |
+| — | Battery | `analog_sensors` | `batt_v` | 2 (always, not selectable) |
 
 Each driver sets its **status OK-bit** (`SENS_OK_*`) on a good read; the packer
-substitutes the sentinel (`0x7FFF`/`0xFFFF`/`0xFF`) when a bit is clear.
+substitutes the sentinel (`0x7FFF`/`0xFFFF`/`0xFF`) when a bit is clear. A sensor
+left out of the config string is skipped entirely: OK-bit clear, sentinel on air,
+**no** `SENS_FAULT` — see [CONFIG.md](CONFIG.md).

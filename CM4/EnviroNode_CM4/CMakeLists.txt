@@ -27,7 +27,7 @@ target_compile_options(${BUILD_UNIT_0_NAME} PRIVATE
 target_link_options(${BUILD_UNIT_0_NAME} PRIVATE
   # User defined linker options
   # newlib-nano ships an integer-only printf; force-link the float variant so
-  # "%f" works in snprintf (power stats, timetable, etc.). The auto-generated
+  # "%f" works in snprintf (sensor readings on `nucleo sensors` / `info`). The auto-generated
   # flags pass "-u _printf_float" as ONE quoted token, which the linker ignores;
   # SHELL: emits it as two proper arguments (-u _printf_float).
   "SHELL:-u _printf_float"

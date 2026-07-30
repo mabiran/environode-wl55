@@ -1,32 +1,52 @@
 # EnviroNode-WL55
 
 **A solar/battery agrometeorological sensor node on the STM32WL55JC, reporting
-over LoRaWAN (bidirectional).** It periodically measures a full weather-and-soil
-picture and uplinks a compact frame to The Things Network; it accepts downlink
-commands for configuration and calibration.
+over LoRaWAN (bidirectional).** Every interval it samples a full weather-and-soil
+picture, packs a fixed 30-byte frame and uplinks it to The Things Network on
+FPort 1. It is reconfigured remotely: which sensors run and how often is one
+ASCII string in braces, sent as a downlink or typed on the ST-Link console.
 
 Built on the proven **dual-core WL55JC1 + LoRaWAN** platform from the KoreroNet 2
-acoustic node — the radio core, OTAA provisioning, backup-register persistence,
-serial command server, event log and watchdog are reused; the application layer
-is new (environmental sensors instead of an acoustic payload).
+acoustic node — the radio core, OTAA provisioning, key persistence, serial
+command server, event log and watchdog are reused. The application layer is new:
+environmental sensors, no acoustic payload, **no Raspberry Pi and no recording
+timetable**.
 
 ---
 
 ## What it measures
 
-| Quantity | Sensor | Interface |
-|---|---|---|
-| Air temp / humidity / pressure ×2 | 2× **BME280** | **I²C1** and **I²C2** (separate buses) |
-| Soil moisture | analog probe | ADC |
-| Leaf wetness | resistive grid | ADC |
-| Battery voltage | divider | ADC |
-| Wind direction | vane potentiometer | ADC |
-| Soil temperature | **PT1000** RTD | **MAX31865** over SPI |
-| Rainfall | tipping bucket | GPIO pulse count |
-| Wind speed | anemometer | GPIO pulse count |
+| Config key | Quantity | Sensor | Interface |
+|---|---|---|---|
+| `T1` / `T2` | Air temp / humidity / pressure ×2 | 2× **BME280** | **I²C2** (Grove shield) and **I²C1** (board pins) |
+| `SM` | Soil moisture | analog probe | ADC |
+| `LW` | Leaf wetness | resistive grid | ADC |
+| `WD` | Wind direction | vane potentiometer | ADC |
+| `ST` | Soil temperature | **PT1000** RTD | **MAX31865** over SPI |
+| `R` | Rainfall | tipping bucket | GPIO pulse count (EXTI) |
+| `WS` | Wind speed + gust | anemometer | GPIO pulse count (EXTI) |
+| — | Battery voltage | divider + INA219 | ADC / I²C — always sent |
+
+## Configuring it
+
+One string, over a LoRaWAN downlink (any FPort, first byte `{`) or the console
+(`nucleo set {…}`, or a bare `{…}` line):
+
+```
+{ALL,15}          every sensor, 15-minute cycle
+{T1,T2,ST,60}     air x2 + soil temp, hourly
+{+R}              add rainfall to whatever is already selected
+{-LW,-WD}         drop leaf wetness and wind direction
+{5}               keep the set, cycle every 5 minutes
+{?}               report the current configuration
+```
+
+A frame is applied in full or rejected in full, and the sensor set + interval are
+persisted in flash. Full reference → **[docs/CONFIG.md](docs/CONFIG.md)**.
 
 Full pin/peripheral map → **[docs/PINOUT.md](docs/PINOUT.md)**.
 On-air byte formats (uplink + downlink) → **[docs/PAYLOAD.md](docs/PAYLOAD.md)**.
+Sensor bring-up / calibration → **[docs/SENSORS.md](docs/SENSORS.md)**.
 System design → **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
 Plan of work → **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
@@ -37,9 +57,9 @@ Plan of work → **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 ```
 EnviroNode-WL55/
 ├── CM4/EnviroNode_CM4/          # Cortex-M4 application (sensors, sampling, uplink)
-│   └── Core/WL55JC1/…           #   ← app source; main.c is the inherited base (see below)
+│   └── Core/WL55JC1/…           #   ← app source: drivers, config/keystore, main.c
 ├── CM0/EnviroNode_CM0PLUS/      # Cortex-M0+ LoRaWAN radio core (reused ~as-is)
-├── docs/                        # PINOUT, PAYLOAD, ARCHITECTURE, ROADMAP, SENSORS
+├── docs/                        # PINOUT, PAYLOAD, CONFIG, SENSORS, ARCHITECTURE, ROADMAP
 └── CLAUDE.md                    # context to continue the build in a fresh session
 ```
 
@@ -70,15 +90,16 @@ firmware does / doesn't do yet.
 
 ## Project status
 
-🟢 **Phase 0 — scaffold (done):** repo created; WL55 dual-core + LoRaWAN skeleton
-migrated and building green under the new name; design specs written.
+🟢 **Phases 0–4 (largely done):** peripherals up (hand-written init — there is no
+`.ioc`), all four sensor drivers written, sampling scheduler + 30-byte FPort-1
+uplink, FPort-10 binary command table, the `{…}` sensor-set config string, and
+OTAA identity + node config persisted in flash so they survive a power cut.
 
-🟡 **Next:** finalize peripherals in CubeMX, add the sensor drivers, replace the
-inherited CM4 application with the sensor-sampling + payload logic, wire the
-downlink command table. See **[docs/ROADMAP.md](docs/ROADMAP.md)**.
+🟡 **Open:** low-power **STOP2 sleep** (the main loop is still busy-wait), the
+FPort-2 diagnostic uplink, and bench-testing every driver against real sensors.
+See **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
-> **Heads-up:** `CM4/EnviroNode_CM4/Core/WL55JC1/Src/main.c` is still the
-> **inherited KoreroNet application** (kept so the project builds and to reuse its
-> infrastructure — clock, UART command server, RTC, mailbox, OTAA, event log,
-> IWDG). Its acoustic/Pi-power logic will be progressively replaced by the
-> EnviroNode sensor logic. It is clearly marked at the top of the file.
+> `CM4/EnviroNode_CM4/Core/WL55JC1/Src/main.c` still carries the inherited
+> KoreroNet infrastructure — clock, UART command server, RTC, mailbox, OTAA, event
+> log, IWDG — which is deliberate reuse. The acoustic, Raspberry-Pi-power and
+> recording-timetable logic has been removed; this node has none of those.

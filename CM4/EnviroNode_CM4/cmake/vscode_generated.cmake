@@ -1,4 +1,4 @@
-# Enable compile command to ease indexing with e.g. clangd
+﻿# Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
 # Compiler options
@@ -17,11 +17,23 @@ target_sources(${BUILD_UNIT_0_NAME} PRIVATE
     "Core/WL55JC1/Src/adc.c"
     "Core/WL55JC1/Src/battery_adc.c"
     "Core/WL55JC1/Src/battery_flow.c"
+    "Core/WL55JC1/Src/envnode_config.c"
+    "Core/WL55JC1/Src/envnode_identity.c"
+    "Core/WL55JC1/Src/envnode_keystore.c"
+    "Core/WL55JC1/Src/envnode_power.c"
+    "Core/WL55JC1/Src/envnode_sensorset.c"
     "Core/WL55JC1/Src/gpio.c"
     "Core/WL55JC1/Src/i2c.c"
     "Core/WL55JC1/Src/ina219.c"
     "Core/WL55JC1/Src/main.c"
     "Core/WL55JC1/Src/rtc.c"
+    "Core/WL55JC1/Src/spi.c"
+    "Core/WL55JC1/Src/sensors/analog_sensors.c"
+    "Core/WL55JC1/Src/sensors/bme280.c"
+    "Core/WL55JC1/Src/sensors/envnode_payload.c"
+    "Core/WL55JC1/Src/sensors/envnode_sensors.c"
+    "Core/WL55JC1/Src/sensors/max31865.c"
+    "Core/WL55JC1/Src/sensors/pulse_counter.c"
     "Core/WL55JC1/Src/stm32wlxx_hal_msp.c"
     "Core/WL55JC1/Src/stm32wlxx_it.c"
     "Core/WL55JC1/Src/usart.c"
@@ -45,6 +57,8 @@ target_sources(${BUILD_UNIT_0_NAME} PRIVATE
     "Drivers/STM32WLxx_HAL_Driver/Src/stm32wlxx_hal_rcc_ex.c"
     "Drivers/STM32WLxx_HAL_Driver/Src/stm32wlxx_hal_rtc.c"
     "Drivers/STM32WLxx_HAL_Driver/Src/stm32wlxx_hal_rtc_ex.c"
+    "Drivers/STM32WLxx_HAL_Driver/Src/stm32wlxx_hal_spi.c"
+    "Drivers/STM32WLxx_HAL_Driver/Src/stm32wlxx_hal_spi_ex.c"
     "Drivers/STM32WLxx_HAL_Driver/Src/stm32wlxx_hal_uart.c"
     "Drivers/STM32WLxx_HAL_Driver/Src/stm32wlxx_hal_uart_ex.c"
     "Drivers/STM32WLxx_HAL_Driver/Src/stm32wlxx_hal_usart.c"

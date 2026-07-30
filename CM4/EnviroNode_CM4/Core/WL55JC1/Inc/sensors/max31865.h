@@ -46,11 +46,23 @@ typedef enum { MAX31865_WIRES_2 = 2, MAX31865_WIRES_3 = 3, MAX31865_WIRES_4 = 4 
 env_status_t max31865_init(SPI_HandleTypeDef *hspi, GPIO_TypeDef *cs_port, uint16_t cs_pin, max31865_wires_t wires);
 
 /**
- * @brief  Read the RTD ratio, convert to resistance then °C (Callendar–Van Dusen).
+ * @brief  Read the RTD ratio, convert to resistance then °C (Callendar–Van Dusen
+ *         above 0 °C, inverse polynomial below it).
+ *
+ * Each call runs one bias-on → settle → one-shot → bias-off cycle (~80 ms), so
+ * neither VBIAS nor the RTD excitation current is left on between samples.
+ *
  * @param[out] t_c  soil temperature °C
- * @retval ENV_OK / ENV_ERR (fault bit set — call max31865_read_fault) / ENV_NOTIMPL
+ * @retval ENV_OK / ENV_ERR (bus error, fault bit set — then call
+ *         max31865_read_fault() — or an out-of-range result)
  */
 env_status_t max31865_read_celsius(float *t_c);
+
+/**
+ * @brief  Raw RTD resistance in ohms (same conversion cycle as above).
+ *         Useful on the bench: a PT1000 at 0 °C reads 1000 Ω, ~1039 Ω at 10 °C.
+ */
+env_status_t max31865_read_ohms(float *ohms);
 
 /** @brief  Read + clear the fault-status register (0 = no fault). */
 uint8_t max31865_read_fault(void);

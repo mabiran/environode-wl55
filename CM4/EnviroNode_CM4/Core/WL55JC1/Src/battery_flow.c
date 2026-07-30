@@ -22,7 +22,8 @@ float BatteryFlow_SoC_Percent(void) {
     if (g_capacity_mAh <= 0.0f) return -1.0f;
     float used = g_accum_mAh;
     float soc  = 100.0f * (1.0f - (used / g_capacity_mAh));
-    if (soc < 0.0f) soc = 0.0f; if (soc > 100.0f) soc = 100.0f;
+    if (soc <   0.0f) soc =   0.0f;
+    if (soc > 100.0f) soc = 100.0f;
     return soc;
 }
 

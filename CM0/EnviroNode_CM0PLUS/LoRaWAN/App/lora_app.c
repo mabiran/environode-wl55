@@ -631,6 +631,14 @@ static void OnRxData(LmHandlerAppData_t *appData, LmHandlerRxParams_t *params)
         RxPort = appData->Port;
         if (appData->Buffer != NULL)
         {
+          /* EnviroNode: EVERY downlink goes to CM4, whatever port it arrived on.
+             The switch below still runs the inherited ST demo behaviour for
+             ports 2 and 3, but those two used to `break` without storing, so a
+             config string sent on port 2 or 3 was silently swallowed — while
+             docs/CONFIG.md promises the "{...}" string is honoured on any port.
+             Storing first makes that promise true and costs one ring slot. */
+          Korero_StoreDownlink(appData->Port, appData->Buffer, appData->BufferSize);
+
           switch (appData->Port)
           {
             case LORAWAN_SWITCH_CLASS_PORT:
@@ -677,10 +685,7 @@ static void OnRxData(LmHandlerAppData_t *appData, LmHandlerRxParams_t *params)
               break;
 
             default:
-              /* KoreroNet: capture gateway config/timetable downlinks (any
-                 application port other than the class-switch / LED ports) so the
-                 Pi can read them via `nucleo get downlink`. */
-              Korero_StoreDownlink(appData->Port, appData->Buffer, appData->BufferSize);
+              /* Already stored above, for every port — nothing extra to do. */
               break;
           }
         }

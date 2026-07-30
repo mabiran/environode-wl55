@@ -22,4 +22,11 @@ Thumbs.db
 desktop.ini
 .DS_Store
 
+# Reference datasheets kept locally but not in the repo: ~10 MB of vendor PDFs
+# that are freely downloadable, and every one of them is cited with its title and
+# URL in docs/LOGBOOK.md §16 References. Drop them in the repo root as needed.
+um2592-*.pdf
+Base_Shield_V2_WiKi.pdf
+*LWS*.pdf
+
 # Keep: CMakeLists.txt, CMakePresets.json, cmake/, flash.ps1, source, docs
