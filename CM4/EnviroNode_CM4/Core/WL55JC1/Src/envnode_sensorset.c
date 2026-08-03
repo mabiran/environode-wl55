@@ -334,9 +334,8 @@ const char *envnode_sensorset_awake_reason(uint8_t mask)
 {
   const uint8_t e = (uint8_t)(mask & SENSOR_EXTI_COUNTED);
 
-  if (e == (SENSOR_R | SENSOR_WS)) return "rain + wind speed are EXTI edge-counted: must stay awake";
-  if (e == SENSOR_R)               return "rain is EXTI edge-counted: must stay awake";
-  if (e == SENSOR_WS)              return "wind speed is EXTI edge-counted: must stay awake";
+  /* Wind speed is no longer here: it is sampled in a burst, not edge-counted. */
+  if (e == SENSOR_R) return "rain is EXTI edge-counted: must stay awake";
   return "no edge-counted sensors selected: may sleep between cycles";
 }
 

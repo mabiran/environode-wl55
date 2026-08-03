@@ -24,7 +24,7 @@ extern "C" {
    console, the downlink command table and the brace parser must all accept
    exactly the same range or a value set by one path would be clamped by
    another. */
-#define ENVCFG_INTERVAL_MIN_DEFAULT   (ENVSET_INTERVAL_DEF)  /*!< 15 min.      */
+#define ENVCFG_INTERVAL_MIN_DEFAULT   (ENVSET_INTERVAL_DEF)  /*!< 1 min (bench)*/
 #define ENVCFG_INTERVAL_MIN_MIN       (ENVSET_INTERVAL_MIN)  /*!< 1 min.       */
 #define ENVCFG_INTERVAL_MIN_MAX       (ENVSET_INTERVAL_MAX)  /*!< 999 min.     */
 #define ENVCFG_CAL_SLOTS              (9u)    /*!< sensor_id 1..8 (index 0 unused) */

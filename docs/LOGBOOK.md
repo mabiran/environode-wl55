@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r9 — 2026-07-30 |
+| **Revision** | r12 — 2026-08-04 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -320,6 +320,77 @@ CubeMX MCU database [[R3]](#16-references).
 
 ---
 
+### 3.4 Component and placement summary (the assembly bill)
+
+Everything that gets fitted, and exactly where. Pins are the MCU pin with the
+Arduino label the silkscreen prints.
+
+**Boards**
+
+| # | Part | Fits where | Notes |
+|---|---|---|---|
+| B1 | NUCLEO-WL55JC1 | — | ST-LINK USB is power + console (115200 8N1) |
+| B2 | Grove Base Shield V2 | onto the Arduino headers | ⚠️ **selector at 3.3 V** — it sets VCC on every socket |
+
+**On I²C2 — the shield's Grove I²C sockets (PA12 SCL / PA11 SDA)**
+
+| # | Part | Address | Fits where |
+|---|---|---|---|
+| U1 | BME280 #1 → `T1` | 0x76 **or** 0x77 | any Grove **I²C** socket |
+| U2 | **INA219** battery monitor | **0x45** = bridge **both** A0 and A1 jumpers | a second Grove **I²C** socket |
+
+**INA219 wiring — it is a high-side current sensor, so the shunt goes in the battery line:**
+
+```
+battery + ──→ VIN+ ─[0.1 Ω shunt on the breakout]─ VIN− ──→ node + all loads
+battery − ──────────────── common GND ─────────────────────→ node GND
+VCC → 3V3 (Grove socket)      SDA/SCL → Grove socket
+```
+Bus voltage is read at VIN− against GND (the 0.1 Ω drop is ~10 mV at 100 mA, i.e.
+noise). Max bus 26 V, so a 4S LiFePO₄ at 13–14.6 V is well inside range. The
+firmware treats **charging as negative current** (`CHARGE_NEGATIVE_CURRENT_A`), so
+if the sign comes out inverted either swap VIN+/VIN− or flip it in software.
+
+**On I²C1 — hand-wired to board pins**
+
+| # | Part | Fits where |
+|---|---|---|
+| U3 | BME280 #2 → `T2` | SCL → **D9** (PA9), SDA → **A2** (PA10), VCC → 3V3, GND |
+
+**Sensors**
+
+| # | Part | Signal to | Power from | Extra parts |
+|---|---|---|---|---|
+| S1 | Decagon **LWS** leaf wetness → `LW` | **A0** (PB1) — *red* wire (LWS) / *orange* (PHYTOS 31) | **VSENS**, not socket VCC | — |
+| S2 | **Davis 7911** direction → `WD` | **A3** (PB4) — *green* (wiper) | **VSENS** — *yellow* | **R2 1 MΩ** A3→GND |
+| S3 | **Davis 7911** speed → `WS` | **A4** (PB14) — *black* (contact), **ADC, burst-sampled** | — (switch to GND, *red*) | **R1 47 kΩ** A4→3V3 — **required**, the internal pull-up is unavailable on an analog pin |
+| S4 | Rain tipping bucket → `R` | **D3** (PB3) | — (switch to GND) | internal pull-up; 10 kΩ + 100 nF optional |
+| S5 | MAX31865 + PT1000 → `ST` | SCK **D13**, MISO **D12**, MOSI **D11**, CS **D10** | 3V3 | **Rref must be 4.02 kΩ** (PT1000, not 430 Ω) |
+| S6 | Soil moisture → `SM` *(future)* | **A1** (PB2) | VSENS | per probe |
+| — | Status LED | **D8** (PC2) | — | ~1 kΩ series |
+
+**Discretes — the small protoboard**
+
+| # | Part | Fits where | Why |
+|---|---|---|---|
+| Q1 | **P-MOSFET** DMG2301L / AO3401 *(or NPN+PNP)* | source→3V3, gate→**D4** (PB5), drain→**VSENS** | gates LWS + vane excitation; see [PINOUT.md](PINOUT.md) for both circuits |
+| R3 | 100 kΩ | Q1 gate → 3V3 | holds the rail OFF while the MCU is in reset |
+| R1 | **47 kΩ** | **A4** → 3V3 | pull-up for the speed contact. **Required** — A4 is an ADC input, so there is no internal pull-up |
+| R2 | **1 MΩ** | **A3** → GND | pins the vane's dead band to 0 V = north. **100 kΩ would cost ~17°** |
+| C1 | 100 nF *(optional)* | **A4** → GND | RC debounce ~1 ms |
+| R4/R5 | 4k7 + 10 kΩ | only if using the **NPN+PNP** variant | base drive |
+| — | 4.7 kΩ ×2 per I²C bus | SDA/SCL → 3V3 | most breakouts already have them; the shield adds none |
+
+**Deliberately NOT fitted**
+
+| Item | Why |
+|---|---|
+| Battery divider on **A5** (PB13) | the INA219 supersedes it, and 56 k + 14.7 k across ~13 V leaks ~184 µA ≈ 4.4 mAh/day. Leave A5 free. The firmware keeps it as a fallback and simply reads 0 V when absent |
+| Any transistor on a sensor **ground** | a low-side switch lifts the ground by Vce(sat) and corrupts every ground-referenced analog reading ([§15 D-19](#15-decision-register)) |
+
+**Free after all of the above:** `PB8` (D5) · `PB12` (D2) · `PB13` (A5) ·
+`PB10` (D6) · `PC1` (D7) · `PA15` · `PA0` · `PA1` · `PA8` · `PB15` · `PC0` · `PC6`.
+
 ## 4. Toolchain and repository setup
 
 ### 4.1 Required software
@@ -551,7 +622,8 @@ current draw is still an open item — see [§11.2](#112-commissioning-checklist
 | ✅ | Sample on demand rather than continuously: BME280 in **forced mode**, MAX31865 **one-shot with VBIAS off** between reads (which also stops the RTD self-heating the soil it measures) | done — [§15 D-08](#15-decision-register) |
 | ✅ | Never write flash on a timer; only on an explicit config change, and only when the value actually changed | done |
 | ✅ | Longer interval = proportionally less energy; the interval is remotely settable 1–999 min | done |
-| ☐ | Gate the sensor excitation rails so probes draw nothing between samples | not implemented — needs a FET on the probe supply |
+| ✅ | Gate the sensor excitation rails so probes draw nothing between samples | firmware done (VSENS on D4, 15 ms pulse); **needs the high-side switch fitted** — [PINOUT.md](PINOUT.md) |
+| ☐ | Gate or drop the battery divider — 56 k + 14.7 k across ~13 V leaks ~184 µA ≈ 4.4 mAh/day, and the INA219 is the primary source anyway | not addressed |
 | ☐ | Drop the status LED, or make its duty cycle configurable | LED is already brief low-duty pulses; not yet configurable |
 | ☐ | Measure and publish an actual current profile (sleep, sample, TX peak) | **open — do this during the first warm test** |
 | ☐ | Lower the LoRa data rate / TX power once link margin is known | untouched; ADR is the radio core's business |
@@ -1268,6 +1340,129 @@ good argument for documenting mechanisms rather than asserting them.
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
 
+### 2026-08-04 — Wind speed moved to ADC burst sampling; `WS` no longer blocks sleep (r12)
+
+Requirement: both 7911 signals on analog inputs, resistors at the connector only,
+no leak when the sensor is unplugged.
+
+**The constraint that shaped it.** The speed output is a contact closure — there
+is no voltage in it proportional to speed, and with passive parts there is no way
+to convert frequency to voltage (an RC average follows *duty cycle*, which the cam
+geometry fixes, so it reads the same at 2 m/s and 20 m/s). Counting transitions is
+the only option. "Analog" therefore means *sample the pin fast and count in
+software*, not *read a proportional voltage*.
+
+**The real cost was never the leak.** Measured against each other:
+
+| | Estimate |
+|---|---|
+| Vane pot, 20 kΩ across 3.3 V, continuous | ~4 mAh/day |
+| Speed pull-up, only while the contact is closed | ~1–2 mAh/day |
+| **Core held awake because `WS` was EXTI-counted** | **~50–60 mAh/day** |
+
+Edge counting cost roughly ten times everything else on the sensor. So `WS` moved
+off EXTI entirely.
+
+**What changed**
+
+- **PB14 (A4) is now `ADC_IN1`**, not an EXTI input. `analog_wind_burst()` samples
+  it at ~1 kHz for `ANEMO_BURST_MS` (3 s) and counts high→low transitions, with
+  hysteresis (2600/1400 counts) plus the 5 ms debounce to reject contact bounce.
+- **`SENSOR_EXTI_COUNTED` is now rain only.** Selecting `WS` no longer blocks
+  STOP2. Rain stays on EXTI because tips are rare, unpredictable and must never be
+  missed — a burst would simply not see them.
+- `pulse_counter` is rain-only; its wind half and the gust bucketing are gone.
+- The burst runs **only when `WS` is selected** — 3 s of awake time is real, and
+  pure waste if nobody asked for wind.
+- **R1 is now 47 kΩ and is required.** An analog pin has no internal pull-up to
+  fall back on, so without it the input floats and the count is meaningless.
+
+**The trade, recorded honestly:** the burst sees **3 seconds of wind per cycle**,
+not the whole interval. Gusts between bursts are invisible, and `wind_speed` and
+`wind_gust` are now **equal by construction** — the 3 s window *is* the WMO gust
+window. Chosen deliberately over option C (EXTI wake-from-STOP2, which would keep
+true interval averaging *and* sleep) because C additionally needs the pulse
+counter moved off `HAL_GetTick()` onto the RTC or an LPTIM. C remains the upgrade
+path if the 3 s snapshot proves too coarse in the field.
+
+**Verified on hardware:**
+
+```
+{ALL,15}       → ACK: config {LW,T1,T2,SM,ST,WS,WD,R,15} saved
+                 ACK: rain is EXTI edge-counted: must stay awake      ← wind gone
+{LW,T1,T2,1}   → ACK: no edge-counted sensors selected: may sleep
+nucleo sensors → wind : 0.00 m/s  gust 0.00 m/s  dir 127.9 deg  [ok]  ← burst ran
+                 status: 0xEC
+```
+
+**Replicator impact:** fit **47 kΩ** from A4 to 3V3 at the connector (not 10 kΩ,
+and not optional). No transistor anywhere on the 7911. Unplugging the sensor
+leaves zero current paths.
+
+### 2026-07-30 — INA219 fitted in the panel; battery divider dropped (r11)
+
+The panel had no INA219, so one is being added on **I²C2** at the **same address
+the KoreroNet build used, 0x45**, with the same 0.1 Ω shunt. That is the battery
+measurement from now on.
+
+- **No firmware change required.** `envnode_sensors_init()` already probes
+  `INA219_Init(&s_ina, &hi2c2, INA219_I2C_ADDR_7B, SHUNT_OHMS)` and the sample
+  path already prefers its bus voltage over the ADC divider. The boot code still
+  writes the same config word (0x399F — 32 V range, ±320 mV shunt, 12-bit,
+  continuous) that KoreroNet used. Migrating the address unchanged is what makes
+  this a no-op.
+- **The A5 battery divider is now deliberately not fitted** ([D-20](#15-decision-register)):
+  the INA219 gives voltage *and* current — so charge/discharge direction and the
+  coulomb counter — and dropping the divider removes its continuous ~184 µA
+  (≈ 4.4 mAh/day). A5 (PB13) returns to the free pool. The firmware keeps the
+  divider as a fallback and simply reads 0 V when it is absent, which is what the
+  console shows today.
+- Added [§3.4](#34-component-and-placement-summary-the-assembly-bill) — the full
+  assembly bill: every board, sensor, transistor and resistor, and exactly which
+  pin or socket each one lands on.
+
+**Replicator impact:** fit the INA219 with **both A0 and A1 address jumpers
+bridged** (0x40 + 1 + 4 = 0x45) and its shunt in series with the battery positive,
+high-side. Do not fit a battery divider.
+
+### 2026-07-30 — Switched sensor rail on D4; battery divider now reads 0 V (r10)
+
+The Decagon LWS draws ~4 mA and its manual requires **pulsed** excitation, but a
+Grove socket's VCC is permanently on. Left as-is that is ≈ **91 mAh/day**, plus
+165 µA for the Davis vane pot — together ≈ **101 mAh/day**, more than the rest of
+the node. Now gated by one GPIO.
+
+- **Enable pin: PB5 = Arduino D4** (freed earlier the same day when wind speed
+  moved to A4). Plain digital output, starts OFF.
+- `analog_read_all()` now: rail on → **15 ms settle** (LWS specifies ≥10 ms; too
+  early returns a partially-settled value that looks like a plausible dry
+  reading) → convert all four channels → rail off.
+- Pulsed cost ≈ **0.002 mAh/day** against 101 continuous.
+- Polarity is a single define, `ENV_SENSPWR_ACTIVE_HIGH`, so the same firmware
+  drives either circuit in [PINOUT.md](PINOUT.md).
+
+**Why not the obvious single NPN.** A lone NPN can only switch the *low* side, and
+that lifts every sensor's ground by its Vce(sat) (0.1–0.2 V). These outputs are
+ground-referenced, so the offset lands straight in the ADC — ~150 counts, when the
+LWS wet threshold sits only ~3 % above its dry baseline. It would read permanently
+wet. Hence high-side only: **NPN + PNP** (keeps the NPN, 2 parts) or a **single
+P-MOSFET** (1 part, no drop — the better circuit). Powering the sensor from the
+GPIO directly is also out: ~4 mA droops a push-pull pin 0.1–0.2 V ≈ 3–6 %, enough
+to fabricate a wet event on its own.
+
+**Observed on hardware after the battery divider moved to PB13/A5:**
+`batt : 0.00 V`, where the same unconnected input on PB14/A4 read 5.67 V. Both are
+meaningless with no divider fitted, but 0 V is the better failure mode — and it
+weakens the "every floating analog pin sits at ~1.1 V" reading of yesterday's
+diagnostic. PB13 floats near ground while PB1/PB2/PB4 sit at ~1.1–1.2 V, so those
+three may well have something attached after all. **The wet/dry test on the LWS is
+still the only experiment that settles it.**
+
+**Replicator impact:** fit one high-side switch on D4 and run the LWS and the vane
+pot from VSENS rather than the socket's VCC. Without it the node still works —
+the sensors are simply powered continuously — so firmware and hardware can be
+updated in either order.
+
 ### 2026-07-30 — Davis 7911 anemometer wired; wind speed moved to A4 (r9)
 
 The Davis 7911 carries **both** wind sensors on one 4-conductor cable (RJ-11).
@@ -1410,6 +1605,10 @@ If you built a node before this date, LW and SM are swapped relative to yours.
 | D-15 | Compiled-in fallback identity, tried last | A virgin board should join and be visible on the gateway, not sit silent waiting to be provisioned | Refusing to join without provisioning — turns every new board into a console session before it shows any sign of life |
 | D-16 | Defaults are `{T1,T2,1}`, not `{ALL,15}` | The first build has only the two air sensors fitted; defaulting to ALL flags a fault for every probe that does not exist yet | `{ALL}` — noisy status byte, and the fault bit stops meaning anything |
 | D-17 | Clear rain/wind accumulators only after CM0+ confirms the send | A refused uplink (not joined, duty cycle) would otherwise destroy that interval's rainfall permanently | Clearing at sample time — simpler, but silently loses data exactly when the radio is struggling |
+| D-18 | Wind speed on A4 (PB14) as a **digital** EXTI input, battery divider moved to A5 | Puts the speed contact next to the direction wiper on A3, so the Davis 7911's single 4-wire cable lands on one Grove socket | Leaving speed on D4 — splits one sensor across two headers for no gain |
+| D-19 | Gate the sensor excitation on the **high** side, never the low side | Sensor outputs are ground-referenced; a low-side switch lifts their ground by Vce(sat) 0.1–0.2 V ≈ 150 counts, and the LWS wet threshold is only ~3 % above dry — it would read permanently wet | A single low-side NPN (the obvious one-transistor circuit); or powering the LWS from a GPIO, whose 0.1–0.2 V droop at 4 mA is the same error again |
+| D-20 | **INA219 for battery, no resistor divider** | One part gives voltage *and* current (so charge/discharge and coulomb counting), and it removes the divider's continuous ~184 µA ≈ 4.4 mAh/day | Divider into the ADC — cheaper, but leaks continuously and cannot measure current |
+| D-21 | Wind speed **burst-sampled on the ADC**, not EXTI-counted | Edge counting pinned the core awake for the whole interval — an estimated ~50–60 mAh/day, roughly 10× the vane pot and pull-up combined. A 3 s burst runs inside the existing awake window, so `WS` no longer blocks sleep | EXTI counting (correct data, but the node can never sleep with wind selected); EXTI wake-from-STOP2 (best of both, but needs the pulse counter moved off `HAL_GetTick` onto RTC/LPTIM — kept as the upgrade path). Cost accepted: 3 s of wind per cycle rather than the whole interval, and gust ≡ mean |
 | D-12 | Keep the dead `pi_pwr_seq`/`pi_pwr_on` fields in `korero_mailbox.h` | The struct is a shared-memory ABI and CM0+ still writes them; removing them from one copy would shift `joined` by 8 bytes and break join reporting silently | Deleting them with the rest of the Pi code — it would have desynchronised the two cores' view of SRAM2 |
 
 ---

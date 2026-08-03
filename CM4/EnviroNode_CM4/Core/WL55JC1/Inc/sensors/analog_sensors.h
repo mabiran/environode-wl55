@@ -26,6 +26,32 @@ extern "C" {
 
 /* Front-end constants — the divider ratio is the one measured on the board. */
 #define ANALOG_OVERSAMPLES   (8u)                 /*!< reads averaged per channel */
+
+/** Settling time after the excitation rail (VSENS) is switched on, before any
+ *  conversion. The Decagon LWS specifies a **10 ms minimum excitation time**;
+ *  15 ms carries margin for the rail's RC and the vane pot. Cost per cycle is
+ *  15 ms of ~4 mA — about 0.017 uAh, versus 91 mAh/day left permanently on. */
+#define ANALOG_RAIL_SETTLE_MS (15u)
+
+/** @name Davis 7911 wind-speed burst sampling
+ *
+ * The anemometer's output is a contact closure to ground — a switch, with no
+ * voltage that encodes speed. It is read by sampling the pin fast for a short
+ * window and counting transitions, rather than by an EXTI interrupt: interrupt
+ * counting would pin the core awake for the whole interval, which costs far more
+ * energy than everything else on this sensor put together.
+ *
+ * The trade is temporal coverage — a burst sees ANEMO_BURST_MS of wind per
+ * cycle, not the whole interval. The window is 3 s so it matches the WMO gust
+ * definition, which is why speed and gust come out equal here (both are the same
+ * 3-second mean). True interval averaging needs EXTI wake-from-STOP2 instead.
+ * @{ */
+#define ANEMO_BURST_MS        (3000u)  /*!< sampling window = the WMO gust window */
+#define ANEMO_SAMPLE_US       (1000u)  /*!< ~1 kHz: ~11 samples per period at the
+                                            sensor's 88 Hz (89 m/s) ceiling      */
+#define ANEMO_HI_COUNTS       (2600u)  /*!< Schmitt-style hysteresis, ~2.1 V      */
+#define ANEMO_LO_COUNTS       (1400u)  /*!< ~1.1 V                                */
+/** @} */
 #define BATT_DIVIDER_RATIO   (VBAT_DIVIDER_GAIN)  /*!< ~4.748 (56.06k / 14.711k)  */
 #define WINDDIR_DEG_MAX      (360.0f)
 
@@ -45,6 +71,22 @@ env_status_t analog_init(void);
  *         that did succeed are still written).
  */
 env_status_t analog_read_all(uint16_t *soil_raw, uint16_t *leaf_raw, float *batt_v, float *winddir_deg);
+
+/**
+ * @brief  Measure wind speed by bursting the ADC on the contact input.
+ *
+ * Blocks for ANEMO_BURST_MS while sampling, so only call it when `WS` is
+ * actually selected. The excitation rail is not involved — the contact is a
+ * passive switch to ground with a pull-up at the connector.
+ *
+ * @param[out] speed_ms  mean over the burst window
+ * @param[out] gust_ms   equal to @p speed_ms by construction: the burst *is* the
+ *                       3-second gust window. Reported separately so the on-air
+ *                       frame keeps its shape and so a future EXTI-based
+ *                       implementation can fill it independently.
+ * @retval ENV_OK, or ENV_ERR if a conversion failed or an argument was NULL.
+ */
+env_status_t analog_wind_burst(float *speed_ms, float *gust_ms);
 
 /**
  * @brief  Set/get the wind-vane north offset in degrees (downlink cmd 0x05).

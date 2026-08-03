@@ -132,7 +132,8 @@ so the console (`info`, `?`) can explain *why* a node will not sleep.
 
 > **STOP2 sleep is implemented** (`envnode_power.c`). Between cycles the CM4 core
 > is stopped and woken by the RTC, in watchdog-safe chunks, with the HAL tick
-> advanced on wake. Selecting `R` or `WS` blocks it, as described above;
+> advanced on wake. Only **`R`** blocks it — wind speed became burst-sampled on
+> 2026-08-04 and no longer pins the core awake;
 > `nucleo sleep off` disables it for bench work. Details and the remaining power
 > work: [LOGBOOK.md §6.4](LOGBOOK.md#64-sleep-and-power).
 >
@@ -153,7 +154,7 @@ so the console (`info`, `?`) can explain *why* a node will not sleep.
 | `{?}` | reply with the canonical string, e.g. `{T1,T2,ST,60}` — changes nothing |
 | `{T1,T2,ST,60}` | replace the set with air ×2 + soil temp; hourly. **May sleep** (no `R`/`WS`) |
 | `{ALL,-T2,10}` | everything except air #2, every 10 min |
-| `{NONE,+R,+WS,5}` | rain + wind speed only, every 5 min. Stays awake (both edge-counted) |
+| `{NONE,+R,+WS,5}` | rain + wind speed only, every 5 min. Stays awake — **`R` is edge-counted** (`WS` is burst-sampled and would sleep on its own) |
 | `{sm,st, 30}` | accepted — case and whitespace are ignored → `{SM,ST,30}` |
 | `{T1,XX}` | **rejected**: unknown token `XX`. `T1` is *not* applied |
 | `{T1,1000}` | **rejected**: interval out of range 1..999 |

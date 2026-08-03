@@ -49,6 +49,21 @@ void MX_GPIO_Init(void)
      their reset state (analog, no drive) keeps them free for a future sensor —
      see docs/PINOUT.md "Free pins". */
 
+  /* --- EnviroNode: switched sensor rail (PB5 / Arduino D4), starts OFF ------
+     Gates the excitation of the powered analog sensors (LWS, vane pot). Starting
+     off matters: the LWS draws ~4 mA continuously if left on, which is ~91 mAh a
+     day — more than the rest of the node put together. */
+#if ENV_SENSPWR_ACTIVE_HIGH
+  HAL_GPIO_WritePin(ENV_SENSPWR_Port, ENV_SENSPWR_Pin, GPIO_PIN_RESET);
+#else
+  HAL_GPIO_WritePin(ENV_SENSPWR_Port, ENV_SENSPWR_Pin, GPIO_PIN_SET);
+#endif
+  GPIO_InitStruct.Pin = ENV_SENSPWR_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(ENV_SENSPWR_Port, &GPIO_InitStruct);
+
   /* --- EnviroNode: MAX31865 chip-select (PA4 / Arduino D10), idle HIGH ------ */
   HAL_GPIO_WritePin(ENV_RTD_CS_Port, ENV_RTD_CS_Pin, GPIO_PIN_SET);
   GPIO_InitStruct.Pin = ENV_RTD_CS_Pin;
@@ -69,17 +84,12 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(ENV_RAIN_Port, &GPIO_InitStruct);
 
-  GPIO_InitStruct.Pin = ENV_WIND_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
-  GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(ENV_WIND_Port, &GPIO_InitStruct);
-
-  /* EXTI3 = rain (PB3), EXTI15_10 = wind (PB14). Low priority: the handlers only
-     bump a counter, and they must never delay the UART console. */
+  /* EXTI3 = rain (PB3) only. Wind speed is NOT an interrupt any more — PB14 is
+     an ADC input sampled in bursts (analog_sensors.c), which is what allows the
+     node to sleep with wind selected. Low priority: the handler only bumps a
+     counter and must never delay the UART console. */
   HAL_NVIC_SetPriority(ENV_RAIN_EXTI_IRQn, 3, 0);
   HAL_NVIC_EnableIRQ(ENV_RAIN_EXTI_IRQn);
-  HAL_NVIC_SetPriority(ENV_WIND_EXTI_IRQn, 3, 0);
-  HAL_NVIC_EnableIRQ(ENV_WIND_EXTI_IRQn);
 
   /* Status LED output on PC2 (Arduino D8, free Grove "D8" socket).
      Start LOW = off. Driven with brief low-duty pulses by Status_Led_Tick(). */

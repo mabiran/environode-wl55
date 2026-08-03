@@ -96,11 +96,13 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* adcHandle)
     PB1      ------> ADC_IN5   leaf wetness    (Arduino A0, Decagon LWS)
     PB2      ------> ADC_IN4   soil moisture   (Arduino A1)
     PB4      ------> ADC_IN3   wind direction  (Arduino A3, Davis 7911 wiper)
+    PB14     ------> ADC_IN1   wind speed      (Arduino A4, Davis 7911 contact)
     PB13     ------> ADC_IN0   battery divider (Arduino A5)
-    Note PB14 (A4) is deliberately NOT here any more: it is the Davis 7911
-    wind-speed contact input, configured as a digital EXTI pin in gpio.c.
+    The speed contact is sampled, not interrupt-counted: analog_sensors.c bursts
+    this channel at ~1 kHz for a few seconds and counts transitions, which lets
+    the node sleep between cycles (docs/SENSORS.md §9).
     */
-    GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_4|GPIO_PIN_13;
+    GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_4|GPIO_PIN_13|GPIO_PIN_14;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
@@ -123,9 +125,9 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* adcHandle)
     __HAL_RCC_ADC_CLK_DISABLE();
 
     /**ADC GPIO Configuration
-    PB1 / PB2 / PB4 / PB13  ------> ADC_IN5 / IN4 / IN3 / IN0
+    PB1 / PB2 / PB4 / PB13 / PB14 ---> ADC_IN5 / IN4 / IN3 / IN0 / IN1
     */
-    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_4|GPIO_PIN_13);
+    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_4|GPIO_PIN_13|GPIO_PIN_14);
 
   /* USER CODE BEGIN ADC_MspDeInit 1 */
 

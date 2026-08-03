@@ -42,7 +42,7 @@ shared SRAM2 mailbox (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 | 6b | Battery V + I | INA219 | **I²C2** | PA12/PA11 | addr `0x45`, R_shunt 0.1 Ω *(reused)* |
 | 7 | Soil temperature | **PT1000 RTD** + MAX31865 | **SPI1** | PA5 SCK / PA6 MISO / PA7 MOSI, CS PA4 | D13/D12/D11/D10 — plain Arduino SPI |
 | 8 | Rain | tipping-bucket reed | **GPIO EXTI3** | PB3 (D3) | pull-up, falling edge, SW debounce |
-| 9 | Wind **speed** | **Davis 7911** contact closure | **GPIO EXTI14** | PB14 (**A4**) | black = contact to GND; pull-up, falling edge; 1 Hz = 2.25 mph |
+| 9 | Wind **speed** | **Davis 7911** contact closure | **ADC_IN1** *(burst-sampled)* | PB14 (**A4**) | black = contact to GND; 47 kΩ pull-up at the connector; 1 Hz = 2.25 mph. Sampled ~1 kHz for 3 s so the node can still sleep |
 | — | LoRaWAN | SubGHz (internal) | **CM0+ radio core** | — | AU915 FSB2 (match TTN) |
 | — | Debug console | USART2 → ST-Link VCP | — | PA2 TX / PA3 RX | 115200 8N1, command server *(reused)* |
 | — | Aux console | USART1 | — | PB6 TX (D1) / PB7 RX (D0) | mirrored command server *(reused)* |
@@ -55,11 +55,67 @@ The **Davis 7911**'s four wires land on the analog Grove socket that carries
 VCC, red → GND. One cable, one socket, no splitting. Rain keeps the Grove "D3"
 socket (PB3) on its own.
 
+### Switched sensor rail (VSENS) — the one transistor worth fitting
+
+Every *powered* analog sensor hangs off a gated rail so it draws nothing between
+measurements. Enable pin: **PB5 = Arduino D4**, settle 15 ms, then convert
+(`analog_sensors.c`).
+
+| On VSENS | Draw while excited |
+|---|---|
+| Decagon LWS excitation | ~4 mA |
+| Davis 7911 direction pot (yellow) | 165 µA (3.3 V / 20 kΩ) |
+| future powered analog probes | — |
+
+Continuous ≈ **101 mAh/day**. Pulsed 15 ms per cycle at 15 min ≈ **0.002 mAh/day**
+— about five orders of magnitude, and the LWS manual *requires* pulsed excitation
+anyway.
+
+**Switch the HIGH side, never the low side.** A single NPN in the ground return is
+the obvious one-transistor circuit and it is wrong here: it lifts each sensor's
+ground by Vce(sat) (0.1–0.2 V), and because these outputs are ground-referenced
+that offset lands directly in the ADC reading — ~150 counts, when the LWS wet
+threshold sits only ~3 % above its dry baseline. It would read permanently wet.
+
+**Option A — NPN + PNP high-side switch** (`ENV_SENSPWR_ACTIVE_HIGH = 1`, default)
+
+```
+                3V3 ──────┬──────────────┐
+                          │ 10k          │
+                     ┌────┴────┐         │
+        PB5 (D4) ──[4k7]──| NPN |        │ PNP (e.g. BC807 / MMBT3906)
+                     │    | BC847|       │  emitter → 3V3
+                    GND   └──┬──┘        │  base    → NPN collector
+                             └───────────┤  collector → VSENS
+                                         └──→ VSENS ──→ LWS excitation
+                                                    └─→ 7911 yellow
+        D4 HIGH = rail ON
+```
+
+**Option B — single P-MOSFET** (`ENV_SENSPWR_ACTIVE_HIGH = 0`)
+
+```
+        3V3 ──────┬── source
+                  │   P-MOS (e.g. DMG2301L / AO3401 — |Vgs(th)| < 1.5 V)
+   PB5 (D4) ──────┼── gate      (+ 100k gate→3V3 so it is OFF while the
+                  │              MCU is in reset)
+                  └── drain ──→ VSENS
+        D4 LOW = rail ON
+```
+
+One part, no Vbe drop, no base current, µV of drop at 4 mA. Option A exists
+because it uses the NPN most people already have; Option B is the better circuit.
+
+> Either way the firmware is identical — only the `ENV_SENSPWR_ACTIVE_HIGH` define
+> in `pins_config.h` changes. **Do not** try to power the LWS from the GPIO pin
+> directly: ~4 mA droops a push-pull output 0.1–0.2 V ≈ 3–6 %, which fabricates or
+> masks a wet event all by itself.
+
 ### Davis 7911 external parts (no transistor needed)
 
 | Part | Where | Why |
 |---|---|---|
-| 10 kΩ | A4 → 3V3 | pull-up for the speed contact. The internal ~40 kΩ works, but the cable is 12 m |
+| **47 kΩ** | A4 → 3V3 | pull-up for the speed contact. A4 is an ADC input now, so the internal pull-up is unavailable — this resistor is **required**, not optional. 47 kΩ halves the closed-contact current versus 10 kΩ while staying stiff enough for the 12 m cable |
 | 1 MΩ | A3 → GND | pins the vane's dead band to ~0 V = north instead of letting the wiper float. 100 kΩ would skew mid-scale readings by ~17° |
 | 100 nF *(optional)* | A4 → GND | RC debounce, ~1 ms with the 10 kΩ — well under the 5 ms software debounce |
 

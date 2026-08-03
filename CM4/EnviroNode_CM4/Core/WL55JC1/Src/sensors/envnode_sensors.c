@@ -193,11 +193,21 @@ static env_status_t envnode_sample_common(sensor_readings_t *out, int consume_pu
     }
   }
 
-  /* --- pulse block (rain + wind speed/gust) ---
-     Always drained, even when a channel is deselected, so the accumulators do
-     not grow without bound; the OK-bits are what the selection gates. */
-  if (pulse_read_stats(&out->rain_tips, &out->rain_mm,
-                       &out->wind_speed_ms, &out->wind_gust_ms, consume_pulses) == ENV_OK) {
+  /* --- wind speed: ADC burst on the contact input -------------------------
+     Only run when WS is actually selected: the burst blocks for ANEMO_BURST_MS
+     (3 s), which is a real slice of the awake window and pure waste if nobody
+     asked for wind. Left at zero otherwise. */
+  int wind_ok = 1;
+  if (sel & SENSOR_WS) {
+    if (analog_wind_burst(&out->wind_speed_ms, &out->wind_gust_ms) != ENV_OK) {
+      wind_ok = 0;
+    }
+  }
+
+  /* --- pulse block (rain only) ---
+     Always drained, even when rain is deselected, so the accumulator does not
+     grow without bound; the OK-bits are what the selection gates. */
+  if (pulse_read_stats(&out->rain_tips, &out->rain_mm, consume_pulses) == ENV_OK) {
     if (en & SENS_OK_RAIN) out->status |= SENS_OK_RAIN;
     /* Speed, direction and gust share ONE on-air OK-bit (docs/PAYLOAD.md), so
        selecting either WS or WD publishes the whole wind triplet. The vane is
@@ -206,7 +216,8 @@ static env_status_t envnode_sample_common(sensor_readings_t *out, int consume_pu
        report a direction of 0° that nobody measured. Keyed on the analog
        block's own result, not on the soil OK-bit, so switching soil moisture
        off does not take wind direction down with it. */
-    if ((en & SENS_OK_WIND) && (!(sel & SENSOR_WD) || analog_ok)) {
+    if ((en & SENS_OK_WIND) && wind_ok &&
+        (!(sel & SENSOR_WD) || analog_ok)) {
       out->status |= SENS_OK_WIND;
     }
   } else if (en & (SENS_OK_RAIN | SENS_OK_WIND)) {

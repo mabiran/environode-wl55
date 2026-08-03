@@ -141,18 +141,35 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
 - **Calibration:** `RAIN_MM_PER_TIP` (0.2794 mm for a 0.011″ bucket — set to yours).
 
 ## 9 · Wind speed — **Davis 7911** anemometer (`pulse_counter.{h,c}`)
-- **Config key:** `WS` (carries the gust field too). **Edge-counted → the node
-  must stay awake while `WS` is selected.**
+- **Config key:** `WS` (carries the gust field too). **Sampled, not edge-counted —
+  so selecting `WS` no longer blocks STOP2 sleep.**
 - **Sensor:** the speed half of the **Davis 7911** — datasheet calls it a *"solid
   state magnetic sensor"* whose output is a **contact closure to ground**, one per
   revolution. Measured cold: open circuit ↔ ~100 Ω closed.
-- **Interface:** **PB14 (Arduino A4)** → **EXTI14**, internal pull-up, falling
-  edge. Debounced with `WIND_DEBOUNCE_MS` = 5 ms (resolves 200 Hz ≫ the sensor's
-  89 m/s ≈ 88 Hz ceiling).
-- **On an analog-capable pin on purpose:** A4 sits next to the direction wiper on
-  A3, so the 7911's single 4-wire cable lands on **one Grove socket** (A3 + A4 +
-  VCC + GND). A4 is used as a plain digital input — the battery divider moved to
-  **A5** to free it. *(Was PB5/D4 before 2026-07-30.)*
+- **Interface:** **PB14 (Arduino A4) = ADC_IN1**, with a **47 kΩ pull-up to 3V3 at
+  the connector**. `analog_wind_burst()` samples the pin at ~1 kHz for
+  `ANEMO_BURST_MS` (3 s) and counts high→low transitions.
+- **Why sampled and not interrupt-counted.** A contact closure carries no voltage
+  proportional to speed, so an ADC cannot read it directly — and with passive
+  parts there is no way to convert frequency to voltage (an RC average is
+  duty-cycle dependent, not frequency dependent, so it reads the same at 2 m/s
+  and 20 m/s). Counting is the only option, and doing it by interrupt pins the
+  core awake for the whole interval — an estimated ~50–60 mAh/day, roughly ten
+  times the vane pot and pull-up combined. A burst runs inside the cycle's normal
+  awake window instead.
+- **The trade, stated plainly:** the burst sees **3 seconds of wind per cycle**,
+  not the whole interval. Gusts between bursts are invisible, and `wind_speed`
+  and `wind_gust` are **equal by construction** — the 3 s window *is* the WMO gust
+  window. True interval averaging needs EXTI wake-from-STOP2, which additionally
+  needs the pulse counter moved off `HAL_GetTick()` onto the RTC or an LPTIM.
+- **Edge detection:** hysteresis at `ANEMO_HI_COUNTS` (2600 ≈ 2.1 V) and
+  `ANEMO_LO_COUNTS` (1400 ≈ 1.1 V) rejects the ~1 ms of contact bounce that a
+  single threshold would count several times; `WIND_DEBOUNCE_MS` (5 ms) catches
+  the rest. ~11 samples per period at the sensor's 88 Hz (89 m/s) ceiling.
+- **On the analog header on purpose:** A4 sits next to the direction wiper on A3,
+  so the 7911's single 4-wire cable lands on **one Grove socket** (A3 + A4 + VCC +
+  GND). The battery divider moved to **A5** to free it.
+  *(History: PB5/D4 EXTI → PB14/A4 EXTI on 2026-07-30 → PB14/A4 ADC on 2026-08-04.)*
 - **Calibration — from the datasheet, not a guess:**
   `V = P(2.25/T)` with V in **mph**, P = pulses, T = seconds ⇒ **1 Hz = 2.25 mph**.
   Cross-checks against the datasheet's *"1600 rev/hr = 1 mph"* (0.444 Hz per mph).

@@ -60,28 +60,22 @@ void pulse_counter_init(void);
 /** @brief  Rain tipping-bucket edge — call from the EXTI callback. Debounced. */
 void pulse_rain_isr(void);
 
-/** @brief  Anemometer edge — call from the EXTI callback. Debounced; feeds gust.*/
-void pulse_wind_isr(void);
-
 /**
- * @brief  Compute this interval's rain + wind stats and reset for the next one.
- * @param[out] rain_tips      tips since last reset
- * @param[out] rain_mm        rain_tips * RAIN_MM_PER_TIP
- * @param[out] wind_speed_ms  interval-average wind speed
- * @param[out] wind_gust_ms   peak 3-second wind speed within the interval
+ * @brief  Read this interval's rainfall and reset for the next one.
+ * @param[out] rain_tips  tips since last reset
+ * @param[out] rain_mm    rain_tips * RAIN_MM_PER_TIP
  * @retval ENV_OK / ENV_ERR (NULL argument)
  */
-env_status_t pulse_read_and_reset(uint16_t *rain_tips, float *rain_mm, float *wind_speed_ms, float *wind_gust_ms);
+env_status_t pulse_read_and_reset(uint16_t *rain_tips, float *rain_mm);
 
 /**
- * @brief  Same statistics, with the reset made optional.
+ * @brief  Same, with the reset made optional.
  *
  * The uplink path consumes the interval (@p reset = 1); the console's `sensors`
  * command must NOT, or typing it would quietly steal rainfall from the next
  * frame. With @p reset = 0 the numbers are "so far this interval".
  */
-env_status_t pulse_read_stats(uint16_t *rain_tips, float *rain_mm,
-                              float *wind_speed_ms, float *wind_gust_ms, int reset);
+env_status_t pulse_read_stats(uint16_t *rain_tips, float *rain_mm, int reset);
 
 /**
  * @brief  Zero the rain accumulator without touching the wind counters
@@ -90,11 +84,10 @@ env_status_t pulse_read_stats(uint16_t *rain_tips, float *rain_mm,
 void pulse_reset_rain(void);
 
 /**
- * @brief  Peek at the live counters without resetting them (console `sensors`).
- * @param[out] rain_tips   tips accumulated so far this interval
- * @param[out] wind_pulses anemometer pulses so far this interval
+ * @brief  Peek at the live tip count without resetting it (console `sensors`).
+ * @param[out] rain_tips  tips accumulated so far this interval
  */
-void pulse_peek(uint16_t *rain_tips, uint32_t *wind_pulses);
+void pulse_peek(uint16_t *rain_tips);
 
 #ifdef __cplusplus
 }

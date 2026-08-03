@@ -65,7 +65,7 @@ extern "C" {
 #define SENSOR_T2     (1u << 2)   /*!< air T/RH/P #2  BME280 on I2C1 (board)   */
 #define SENSOR_SM     (1u << 3)   /*!< soil moisture           (ADC)           */
 #define SENSOR_ST     (1u << 4)   /*!< soil temperature PT1000 (SPI1)          */
-#define SENSOR_WS     (1u << 5)   /*!< wind speed              (EXTI5)         */
+#define SENSOR_WS     (1u << 5)   /*!< wind speed   Davis 7911 (EXTI14, PB14)  */
 #define SENSOR_WD     (1u << 6)   /*!< wind direction, vane    (ADC)           */
 #define SENSOR_R      (1u << 7)   /*!< rainfall, tipping bucket (EXTI3)        */
 
@@ -73,7 +73,11 @@ extern "C" {
 #define SENSOR_NONE   (0x00u)     /*!< the NONE alias                          */
 
 /** Edge-counted sensors: while either is selected the node must stay awake. */
-#define SENSOR_EXTI_COUNTED  (SENSOR_WS | SENSOR_R)
+/** Sensors counted from GPIO edges, which therefore pin the core awake.
+ *  **Rain only.** Wind speed left this set on 2026-08-04 when it moved from an
+ *  EXTI interrupt to ADC burst sampling — a burst runs inside the normal awake
+ *  window, so selecting `WS` no longer blocks STOP2 (docs/SENSORS.md §9). */
+#define SENSOR_EXTI_COUNTED  (SENSOR_R)
 /** @} */
 
 /** @name Interval bounds (minutes) — the SPEC's 1..999 @{ */

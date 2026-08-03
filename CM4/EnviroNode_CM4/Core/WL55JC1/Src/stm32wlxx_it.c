@@ -23,7 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "pins_config.h"                 /* ENV_RAIN_Pin / ENV_WIND_Pin       */
-#include "sensors/pulse_counter.h"       /* pulse_rain_isr / pulse_wind_isr   */
+#include "sensors/pulse_counter.h"       /* pulse_rain_isr                    */
 #include "rtc.h"                         /* hrtc — RTC wake-up from STOP2     */
 /* USER CODE END Includes */
 
@@ -224,18 +224,6 @@ void EXTI3_IRQHandler(void)
 }
 
 /**
-  * @brief This function handles EXTI lines [15:10] — Davis 7911 wind-speed
-  *        contact on PB14 (Arduino A4).
-  *
-  * PB14 is the only EXTI source in the 10..15 group on this board, so there is
-  * nothing to disambiguate here.
-  */
-void EXTI15_10_IRQHandler(void)
-{
-  HAL_GPIO_EXTI_IRQHandler(ENV_WIND_Pin);
-}
-
-/**
   * @brief This function handles USART1 Interrupt.
   */
 void USART1_IRQHandler(void)
@@ -275,7 +263,6 @@ void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin)
 {
   switch (GPIO_Pin) {
     case ENV_RAIN_Pin: pulse_rain_isr(); break;   /* PB3 / Arduino D3 */
-    case ENV_WIND_Pin: pulse_wind_isr(); break;   /* PB5 / Arduino D4 */
     default: break;
   }
 }

@@ -1080,8 +1080,8 @@ static int EnvNode_UplinkNow(void)
        and can be cleared. Pulses that arrived during the transmission itself are
        lost — bounded by the airtime, and far cheaper than losing a whole
        interval every time the radio refuses. */
-    uint16_t tips; float mm, ws, gust;
-    (void)pulse_read_and_reset(&tips, &mm, &ws, &gust);
+    uint16_t tips; float mm;
+    (void)pulse_read_and_reset(&tips, &mm);
 
     char line[64];
     snprintf(line, sizeof(line), "ACK: uplink sent, %u bytes on FPort %u\r\n",

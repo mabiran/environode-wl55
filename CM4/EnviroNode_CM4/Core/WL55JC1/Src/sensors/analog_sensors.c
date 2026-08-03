@@ -11,10 +11,32 @@
   ******************************************************************************
   */
 #include "sensors/analog_sensors.h"
+#include "sensors/pulse_counter.h"   /* ANEMO_MS_PER_HZ, WIND_DEBOUNCE_MS */
 #include "adc.h"
 
 static uint8_t s_ready;
 static float   s_winddir_offset_deg;   /*!< vane north alignment (cmd 0x05).  */
+
+/**
+ * @brief  Switch the sensor excitation rail (VSENS) on or off.
+ *
+ * The Decagon LWS is explicitly intended for loggers that "provide short
+ * excitation pulses" — it has no internal regulator and draws ~4 mA, so leaving
+ * it powered costs ~91 mAh/day, several times the rest of the node. The Davis
+ * vane pot adds another 165 uA. Both hang off this one rail (docs/PINOUT.md).
+ *
+ * If no switch is fitted yet, the sensors are simply powered from the Grove
+ * socket's permanent VCC and this call is a harmless no-op as far as they are
+ * concerned — so firmware and hardware can be updated in either order.
+ */
+static void analog_rail(int on)
+{
+#if ENV_SENSPWR_ACTIVE_HIGH
+  HAL_GPIO_WritePin(ENV_SENSPWR_Port, ENV_SENSPWR_Pin, on ? GPIO_PIN_SET : GPIO_PIN_RESET);
+#else
+  HAL_GPIO_WritePin(ENV_SENSPWR_Port, ENV_SENSPWR_Pin, on ? GPIO_PIN_RESET : GPIO_PIN_SET);
+#endif
+}
 
 /* Convert raw counts to volts at the pin. */
 static inline float counts_to_v(uint16_t counts)
@@ -46,6 +68,13 @@ env_status_t analog_read_all(uint16_t *soil_raw, uint16_t *leaf_raw, float *batt
   env_status_t rc = ENV_OK;
   uint16_t raw = 0u;
 
+  /* Power the excitation rail and let it settle before converting anything.
+     The LWS specifies a 10 ms minimum excitation time; sampling early returns a
+     partially-settled value that looks like a plausible dry reading, which is
+     the worst kind of wrong. ANALOG_RAIL_SETTLE_MS carries margin over that. */
+  analog_rail(1);
+  HAL_Delay(ANALOG_RAIL_SETTLE_MS);
+
   /* Soil moisture — raw counts; the probe's curve is applied off-node. */
   if (ADC_ReadChannelAvg(ENVNODE_ADC_CH_SOIL, ANALOG_OVERSAMPLES, &raw) == HAL_OK) {
     *soil_raw = raw;
@@ -75,6 +104,64 @@ env_status_t analog_read_all(uint16_t *soil_raw, uint16_t *leaf_raw, float *batt
   } else {
     *winddir_deg = 0.0f; rc = ENV_ERR;
   }
+
+  /* Excitation off again — the whole point of the rail. */
+  analog_rail(0);
+
+  return rc;
+}
+
+env_status_t analog_wind_burst(float *speed_ms, float *gust_ms)
+{
+  if (!s_ready || speed_ms == NULL || gust_ms == NULL) return ENV_ERR;
+
+  const uint32_t t0 = HAL_GetTick();
+  uint32_t closures = 0u;
+  uint32_t last_edge_ms = 0u;
+  uint8_t  state_high = 1u;          /* pull-up holds the line high when open */
+  int      first = 1;
+  env_status_t rc = ENV_OK;
+
+  /* Sample the contact for the whole window, counting high->low transitions —
+     one per revolution. Hysteresis rejects the ~1 ms of mechanical bounce that a
+     bare threshold would count several times, and the debounce floor rejects the
+     rest. Nothing here touches the excitation rail: the contact is a passive
+     switch with a pull-up at the connector. */
+  while ((uint32_t)(HAL_GetTick() - t0) < ANEMO_BURST_MS) {
+    uint16_t raw = 0u;
+    if (ADC_ReadChannel(ENVNODE_ADC_CH_WINDSPD, &raw) != HAL_OK) {
+      rc = ENV_ERR;
+      break;
+    }
+
+    const uint32_t now = HAL_GetTick();
+    if (first) {                      /* adopt the starting level, do not count it */
+      state_high = (raw > ANEMO_LO_COUNTS) ? 1u : 0u;
+      first = 0;
+    } else if (state_high && raw < ANEMO_LO_COUNTS) {
+      /* falling edge = contact closed */
+      if (closures == 0u || (uint32_t)(now - last_edge_ms) >= WIND_DEBOUNCE_MS) {
+        closures++;
+        last_edge_ms = now;
+      }
+      state_high = 0u;
+    } else if (!state_high && raw > ANEMO_HI_COUNTS) {
+      state_high = 1u;                /* released — arms the next closure */
+    }
+
+    /* ~1 kHz. The conversion itself is ~40 us, so this delay dominates. */
+    uint32_t tick = HAL_GetTick();
+    while ((HAL_GetTick() - tick) < (ANEMO_SAMPLE_US / 1000u)) { /* 1 ms */ }
+  }
+
+  const float window_s = (float)ANEMO_BURST_MS / 1000.0f;
+  const float hz       = (float)closures / window_s;
+
+  *speed_ms = hz * ANEMO_MS_PER_HZ;
+  /* The burst window IS the 3-second gust window, so the two coincide. Kept as a
+     separate output so the frame layout is unchanged and a future EXTI-based
+     implementation can report a real peak. */
+  *gust_ms  = *speed_ms;
 
   return rc;
 }

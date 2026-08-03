@@ -50,14 +50,37 @@
 #define ENV_RAIN_Pin          GPIO_PIN_3
 #define ENV_RAIN_EXTI_IRQn    EXTI3_IRQn
 
-/* Anemometer (wind speed) — Arduino **A4** (PB14), EXTI14, pull-up, falling edge.
-   On an analog-capable pin on purpose: it puts the speed contact on A4 right next
-   to the direction wiper on A3, so the Davis 7911's single 4-wire cable lands on
-   ONE Grove socket (A3+A4 = wiper + contact, plus VCC and GND). A4 is used as a
-   plain digital input here — no ADC involved. Moved from PB5/D4 on 2026-07-30. */
-#define ENV_WIND_Port         GPIOB
-#define ENV_WIND_Pin          GPIO_PIN_14
-#define ENV_WIND_EXTI_IRQn    EXTI15_10_IRQn
+/* Anemometer (wind speed) — Arduino **A4** (PB14) = **ADC_IN1**, sampled.
+   The contact is read by bursting the ADC at ~1 kHz for a few seconds and
+   counting transitions (analog_sensors.c), NOT by an EXTI interrupt. Edge
+   counting would pin the core awake for the whole interval — roughly ten times
+   the energy of everything else on this sensor — whereas a burst lets the node
+   sleep. The trade is temporal coverage: a burst sees a few seconds of wind per
+   cycle rather than integrating the whole interval (docs/SENSORS.md §9).
+   A4 sits next to the wiper on A3, so the 7911's 4-wire cable still lands on one
+   Grove socket. External 47 k pull-up to 3V3 at the connector. */
+
+/* --- Switched sensor rail (VSENS) — Arduino D4 (PB5) ------------------------
+   One GPIO gates the excitation of every *powered* analog sensor, so they draw
+   nothing between measurements:
+
+     VSENS feeds : Decagon LWS excitation (~4 mA)
+                   Davis 7911 direction pot supply, yellow (165 uA @ 20 k)
+                   any future powered analog probe (e.g. soil moisture)
+
+   Grounds are NOT switched. That is the whole point of gating the HIGH side: a
+   low-side switch would lift every sensor's ground by its Vce(sat) (0.1-0.2 V),
+   and since these outputs are ground-referenced that offset lands straight in
+   the ADC reading — ~150 counts, when the LWS wet threshold sits only ~3 % above
+   its dry baseline. High-side switching keeps the analog reference clean.
+
+   Polarity depends on the part fitted — flip this one define, nothing else:
+     1 = active HIGH : NPN driving a PNP/P-MOS high-side switch (GPIO high = on)
+     0 = active LOW  : P-MOSFET driven straight from the GPIO (GPIO low = on)
+   See docs/PINOUT.md for the two circuits. */
+#define ENV_SENSPWR_Port         GPIOB
+#define ENV_SENSPWR_Pin          GPIO_PIN_5
+#define ENV_SENSPWR_ACTIVE_HIGH  (1)
 
 /* --- Davis 7911 anemometer wiring (datasheet DS7911 Rev G) -----------------
      Yellow  pot supply voltage        -> 3V3
