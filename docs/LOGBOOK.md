@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r14 — 2026-08-04 |
+| **Revision** | r15 — 2026-08-04 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -1383,6 +1383,29 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-04 — ARCHITECTURE.md rewritten as the program-flow document (r15)
+
+An audit prompted by the question "is the documentation actually complete?"
+found **ARCHITECTURE.md still at its Phase-0 state** — it claimed persistence
+lives in RTC backup registers (flash pages since r5), wind speed is ISR-counted
+(burst-sampled since r12), gust is "max instantaneous over the interval"
+(superseded twice), and it named `RPi_HandleLine`/`Korero_ServeDownlinks`,
+which no longer exist. The one companion document the update rule had never
+touched was the one that drifted — the rule now covers it.
+
+Rewritten from the current source as the **program-flow** document:
+- the 10-step boot sequence with the console line each step prints;
+- **where the LoRaWAN identity comes from** — the two layers (CM0+'s ignorable
+  compiled table vs CM4's chain: backup registers → flash page 63 → the
+  compiled-in placeholder), what "hard-coded" actually means here, and how
+  provisioning overrides it;
+- the main loop tick order; measurement→uplink flow including where the offline
+  log sits and why; the downlink flow both transports; the sleep cycle; the
+  persistence map with the two flash-write rules; the reuse map's final state.
+
+**Replicator impact:** ARCHITECTURE.md is now trustworthy again. If a flow in
+it disagrees with the source, the source wins and the doc has a bug — report it.
 
 ### 2026-08-04 — SD driver programmed (dormant); master document created (r14)
 
