@@ -28,6 +28,7 @@ target_sources(${BUILD_UNIT_0_NAME} PRIVATE
     "Core/WL55JC1/Src/ina219.c"
     "Core/WL55JC1/Src/main.c"
     "Core/WL55JC1/Src/rtc.c"
+    "Core/WL55JC1/Src/sd_spi.c"
     "Core/WL55JC1/Src/spi.c"
     "Core/WL55JC1/Src/sensors/analog_sensors.c"
     "Core/WL55JC1/Src/sensors/bme280.c"

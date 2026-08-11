@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r13 — 2026-08-04 |
+| **Revision** | r14 — 2026-08-04 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -47,6 +47,7 @@ if that happens, fix the logbook.
 
 | Document | Authority over |
 |---|---|
+| [MASTER.md](MASTER.md) | The thesis-style narrative — descriptive, defers to the specs below |
 | [PINOUT.md](PINOUT.md) | Pin and peripheral allocation |
 | [PAYLOAD.md](PAYLOAD.md) | Uplink frame bytes, downlink command table |
 | [CONFIG.md](CONFIG.md) | The `{…}` sensor-set configuration string |
@@ -1075,6 +1076,45 @@ Set these to the parts actually fitted, then re-run the affected test.
 
 ---
 
+## 12A. Future functionality — SD-card mass logging
+
+> **Status: driver programmed and compiled, service layer not built.** `nucleo sd`
+> probes for a card today; nothing writes to one yet. The offline flash ring
+> ([§7](#7-non-volatile-memory-map)) is the live store.
+
+**Goal.** Replace the 14 KB / 357-record flash ring with months of removable
+history: daily `YYYYMMDD.CSV` files (same columns as `nucleo log dump`) on a
+FAT32 card any computer reads.
+
+**What exists now**
+
+| Layer | State |
+|---|---|
+| SPI-mode SD driver (`sd_spi.{h,c}`): init, SDHC/SDSC detection, capacity from CSD, single-block read/write | **done** — exercised by `nucleo sd`; safe with no hardware (times out in ~100 ms) |
+| Bus plumbing | done — shares SPI1 with the MAX31865, own CS on **D2/PB12**, init at 250 kHz then back to 2 MHz, CS pin untouched until first probe |
+| FAT filesystem (FatFs), file append, daily rotation | **not built** |
+
+**Hardware needed** (from [the parts discussion](#14-build-log)): 3.3 V-native
+microSD breakout (⚠️ not an HW-125 fed 3.3 V — its regulator browns out), card
+≤ 32 GB, 10 kΩ CS pull-up, 100 nF + 10 µF at the breakout. VCC from the
+always-on 3V3, **not** VSENS. Do not use the Grove "D2" socket (its second pin
+is D3 = rain); wire to the header.
+
+**Enable plan, in order**
+1. Wire the breakout; `nucleo sd` must report the card type and true capacity.
+2. Vendor **FatFs** from `STM32Cube_FW_WL_V1.3.1\Middlewares\Third_Party\FatFs`
+   (same package the HAL came from), minimal write config; add a `diskio.c`
+   backed by `sd_spi_read_block`/`sd_spi_write_block`.
+3. **Flash budget is the constraint:** ~7 KB headroom vs ~10–15 KB for FatFs.
+   The plan is to shrink the flash ring to 3 pages (153 records — still a day of
+   15-min backup) which frees 8 KB, since the card supersedes the ring's
+   capacity role; the ring stays as the card-failed fallback.
+4. `envnode_sdlog.c`: mount at boot, append one CSV row per cycle right after
+   `envnode_log_append()`, daily file rotation, card-removed → fall back to the
+   ring and say so on the console; `nucleo sd dump`/`sync` as needed.
+5. Power: the card idles at 100 µA–1 mA. If that matters, gate its VCC and
+   remount per burst — measure first.
+
 ## 13. Replication recipe
 
 Condensed end-to-end procedure for building node *n+1*.
@@ -1343,6 +1383,28 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-04 — SD driver programmed (dormant); master document created (r14)
+
+- **`sd_spi.{h,c}`** — full SPI-mode SD driver: 74-clock warm-up, CMD0/CMD8/
+  ACMD41/CMD58 bring-up, SDHC vs SDSC addressing, capacity from CSD, single-
+  block read/write. Compiled into the image but **not in service**: nothing
+  writes to a card; `nucleo sd` probes and reports (safe with no hardware —
+  CMD0 times out in ~100 ms). CS = **D2/PB12**, configured only on first probe
+  so the dormant driver costs the free pin nothing. Init drops SPI1 to 250 kHz
+  (SD spec) and always restores the MAX31865's 2 MHz.
+- **[§12A](#12a-future-functionality--sd-card-mass-logging)** added — the
+  enable plan: FatFs from the same Cube package, the flash-budget constraint
+  (~7 KB headroom vs 10–15 KB FatFs → shrink the log ring to 3 pages when
+  enabling), daily CSV files, card-failed falls back to the ring.
+- **[MASTER.md](MASTER.md) created** — the thesis-style master document:
+  abstract, motivation, architecture, per-subsystem design rationale with
+  decision cross-references, the protocol, the power story, and an honest
+  verified-vs-pending §9. Descriptive, not normative; added to the companion
+  table and CLAUDE.md with a per-milestone update rule.
+- Board still unplugged — r13's log verification and this SD probe both queue
+  for its return.
+- **Replicator impact:** none yet. When adding SD hardware, start at §12A.
 
 ### 2026-08-04 — Offline timestamped logging in flash; the USB question answered (r13)
 

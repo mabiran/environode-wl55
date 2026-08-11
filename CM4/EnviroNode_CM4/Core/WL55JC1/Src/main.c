@@ -76,6 +76,7 @@
 #include "envnode_power.h"             /* STOP2 sleep between measurement cycles */
 #include "envnode_identity.h"          /* compiled-in fallback OTAA identity     */
 #include "envnode_log.h"               /* offline sensor log (flash ring)        */
+#include "sd_spi.h"                    /* SD driver — programmed, not in service */
 #include "sensors/envnode_sensors.h"
 #include "sensors/envnode_payload.h"
 #include "sensors/analog_sensors.h"
@@ -2008,6 +2009,7 @@ static void Print_MessageSyntax(void)
     "nucleo log             (offline log status: records used / capacity)\r\n",
     "nucleo log dump [n]    (CSV of every logged reading, newest first)\r\n",
     "nucleo log erase       (wipe the offline log)\r\n",
+    "nucleo sd              (probe for an SD card; driver only, logging future)\r\n",
     "nucleo sleep on|off    (STOP2 between cycles; off keeps the console live)\r\n",
     "-- Sensor set: what to measure, how often (docs/CONFIG.md) --\r\n",
     "nucleo set {LW,T1,T2,SM,ST,WS,WD,R,15}   (replace the set + interval)\r\n",
@@ -2133,6 +2135,23 @@ static void Console_HandleLine(const char *line_in) {
   if (strstr(cmd, "nucleoresetrain")) {
     pulse_reset_rain();
     UART1_Send("ACK: rain accumulator cleared\r\n");
+    return;
+  }
+  /* SD card probe — the driver is programmed but nothing logs to SD yet
+     (docs/LOGBOOK.md "SD-card mass logging"). Safe with no breakout wired:
+     CMD0 times out and reports "no card" in ~100 ms. */
+  if (strstr(cmd, "nucleosd")) {
+    sd_info_t si;
+    char lm[96];
+    UART1_Send("ACK: probing SPI1 for an SD card (CS = D2/PB12)...\r\n");
+    if (sd_spi_probe(&si)) {
+      static const char *tname[] = { "none", "SD v1", "SD v2", "SDHC" };
+      snprintf(lm, sizeof(lm), "SD: %s, %lu MB. Driver OK - file logging not yet enabled\r\n",
+               tname[si.type], (unsigned long)si.capacity_mb);
+    } else {
+      snprintf(lm, sizeof(lm), "SD: no card responded (no breakout, no card, or wiring - docs/LOGBOOK.md)\r\n");
+    }
+    UART1_Send(lm);
     return;
   }
   /* Offline sensor log. Ordering matters: "logdump"/"logerase" contain "log",

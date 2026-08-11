@@ -24,6 +24,9 @@ Pi-power / recording-timetable application logic in CM4 `main.c` — gone, with 
 sensor-set config string in place of the timetable.
 
 ## Ground-truth design (do not drift from these)
+- `docs/MASTER.md` — **the thesis-style master document**: narrative, rationale,
+  verification status. Descriptive, not normative — specs win on conflict.
+  Update it when a milestone lands (new sensor, new subsystem, major decision).
 - `docs/LOGBOOK.md` — **the living build logbook + replication manual.** Entry
   point for any reader; updated on every change (see Working rules).
 - `docs/PINOUT.md`  — sensor→peripheral map + GPIOs (**LOCKED**, hand-written init).
