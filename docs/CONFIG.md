@@ -35,7 +35,7 @@ interval:= 1..999            ; minutes between measure+uplink cycles
 | `T2` | `1<<2` = 0x04 | Air temp / RH / pressure #2 | `bme280` | **I²C1** — PA9 SCL / PA10 SDA (board pins) | `air2_temp/rh/press` (9 / 11 / 12) | `SENS_OK_AIR2` |
 | `SM` | `1<<3` = 0x08 | Soil moisture | `analog_sensors` | ADC_IN4 — PB2 (A1) | `soil_moist` (14) | `SENS_OK_SOIL` |
 | `ST` | `1<<4` = 0x10 | Soil temperature (PT1000) | `max31865` | SPI1 — PA5/PA6/PA7, CS PA4 | `soil_temp` (18) | `SENS_OK_PT1000` |
-| `WS` | `1<<5` = 0x20 | Wind speed (+ gust) | `pulse_counter` | EXTI5 — PB5 (D4) | `wind_speed` (20), `wind_gust` (24) | `SENS_OK_WIND` |
+| `WS` | `1<<5` = 0x20 | Wind speed (+ gust) | `analog_sensors` (3 s ADC burst) | ADC_IN1 — PB14 (**A4**) | `wind_speed` (20), `wind_gust` (24) | `SENS_OK_WIND` |
 | `WD` | `1<<6` = 0x40 | Wind direction | `analog_sensors` | ADC_IN3 — PB4 (A3) | `wind_dir` (22) | `SENS_OK_WIND` |
 | `R`  | `1<<7` = 0x80 | Rainfall | `pulse_counter` | EXTI3 — PB3 (D3) | `rain_tips` (26), `rain_mm` (28) | `SENS_OK_RAIN` |
 
@@ -117,15 +117,16 @@ the sensor set. A deselected sensor sends its sentinel (`0x7FFF` for i16,
 [PAYLOAD.md](PAYLOAD.md) renders "no data" rather than a plausible-looking zero.
 `b7 fault` is **not** set for a deselected sensor.
 
-## Power implication (report only — sleep is Phase 5)
+## Power implication
 
-Rain (`R`) and wind speed (`WS`) are counted as **EXTI edges**, so the node must
-stay awake between cycles to see them. Everything else is sampled on demand.
+Rain (`R`) is counted as **EXTI edges**, so the node must stay awake between
+cycles to see tips. Everything else — **including wind speed, which is ADC
+burst-sampled since 2026-08-04** — is measured on demand inside the awake window.
 
 | Selection | May sleep between cycles? | Reason |
 |---|---|---|
-| contains `R` and/or `WS` | **no** | rain/wind-speed pulses are edge-counted on EXTI3/EXTI5 |
-| any other selection | yes | all remaining sensors are sampled on demand |
+| contains `R` | **no** | rain tips are edge-counted on EXTI3 and must never be missed |
+| any other selection (incl. `WS`) | yes | sampled on demand; wind is a 3 s ADC burst per cycle |
 
 The firmware exposes this as a **predicate plus a human-readable reason string**
 so the console (`info`, `?`) can explain *why* a node will not sleep.

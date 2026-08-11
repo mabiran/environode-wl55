@@ -95,8 +95,14 @@ firmware does / doesn't do yet.
 uplink, FPort-10 binary command table, the `{…}` sensor-set config string, and
 OTAA identity + node config persisted in flash so they survive a power cut.
 
-🟡 **Open:** low-power **STOP2 sleep** (the main loop is still busy-wait), the
-FPort-2 diagnostic uplink, and bench-testing every driver against real sensors.
+Also done since: **STOP2 sleep** with RTC wake (verified on hardware), the
+**offline timestamped sensor log** (`nucleo log dump` = CSV), a switched sensor
+excitation rail, Davis 7911 wind by ADC burst sampling, and a dormant SD-card
+driver. Start reading at **[docs/MASTER.md](docs/MASTER.md)** (narrative) and
+**[docs/LOGBOOK.md](docs/LOGBOOK.md)** (build log + replication manual).
+
+🟡 **Open:** the FPort-2 diagnostic uplink, current-draw measurement, and
+bench-testing every driver against real sensors.
 See **[docs/ROADMAP.md](docs/ROADMAP.md)**.
 
 > `CM4/EnviroNode_CM4/Core/WL55JC1/Src/main.c` still carries the inherited

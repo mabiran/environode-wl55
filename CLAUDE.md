@@ -54,7 +54,8 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
       why CubeMX is not needed; regenerating an `.ioc` would overwrite these).
 - [x] Peripherals up: **I²C1** PA9/PA10 (BME280 #2, board pins), **I²C2** PA12/PA11
       (BME280 #1 via Grove shield + INA219), **SPI1** PA5/6/7 + CS PA4 (MAX31865),
-      **ADC** PB1/PB2/PB4/PB14, **EXTI3/EXTI5** PB3/PB5 (rain/wind).
+      **ADC** PB1 leaf / PB2 soil / PB4 vane / PB14 wind-burst / PB13 batt,
+      **EXTI3** PB3 (rain — the only interrupt-counted sensor).
 - [x] Sensor drivers implemented: `bme280` (Bosch compensation, forced mode),
       `max31865` (PT1000, one-shot + bias off, CVD + sub-zero), `analog_sensors`,
       `pulse_counter` (debounce, atomic snapshot, 3 s gust buckets).
@@ -71,11 +72,19 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
       the linker script) so the AppKey survives a full power loss.
 - [x] Pi-power / timetable / power-history code **removed** from `main.c`
       (PB10/D6 and PC1/D7 are free). AudioMoth support is gone too.
-- [ ] **Low-power sleep (STOP2 + RTC/LPTIM wake) — still to do**, still a busy
-      main loop. `docs/CONFIG.md` already defines the may-sleep predicate:
-      selecting `R` or `WS` (EXTI edge counting) forces the node to stay awake.
+- [x] **STOP2 sleep implemented and hardware-verified** (`envnode_power.c`): RTC
+      wake, 8 s IWDG-safe chunks, HAL tick advanced on wake. Only `R` blocks
+      sleep — wind speed is ADC **burst-sampled** on A4/PB14, not edge-counted.
+- [x] Offline sensor log: flash ring pages 55–61, 357 timestamped frames,
+      `nucleo log dump` = CSV (`envnode_log.c`). The WL55 has **no USB** — the
+      MSD drive belongs to the ST-LINK; console CSV is the retrieval path.
+- [x] SD SPI driver programmed but dormant (`sd_spi.c`, CS D2/PB12,
+      `nucleo sd` probes); FAT layer is future work (LOGBOOK §12A).
 - [ ] FPort-2 diagnostic uplink (`get_config` returns ENV_NOTIMPL until then; a
       downlinked `{?}` is answered on the console only).
+- [ ] Pending the board's return: verify offline log + SD probe on hardware;
+      BME280s/INA219 still not answering on either I²C bus (suspect shield
+      seating / 3V3 selector).
 
 ## Non-volatile layout (CM4 flash, reserved in STM32WL55JCIX_FLASH.ld)
 `FLASH` is declared as **110K** so these pages are never used by code:

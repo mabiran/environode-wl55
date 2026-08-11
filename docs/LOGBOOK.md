@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r15 — 2026-08-04 |
+| **Revision** | r16 — 2026-08-04 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -66,6 +66,8 @@ Every change to the project updates this file **in the same commit**:
 3. Record any new decision in [§15 Decision register](#15-decision-register).
 4. Bump the **Revision** in the header block.
 5. **Verify** (this step is not optional):
+   - **grep the whole corpus for the OLD fact** any change replaced — staleness
+     hides in documents that merely mention a fact, not just those that own it,
    - every internal anchor resolves,
    - every companion-document link resolves,
    - every pin, address, constant and command quoted here still matches the
@@ -1383,6 +1385,24 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-04 — Full-corpus staleness sweep (r16)
+
+A "fully updated now?" challenge triggered a grep sweep of **every** document
+for claims invalidated by recent work. Five found, all fixed:
+
+| File | Stale claim | Reality since |
+|---|---|---|
+| CLAUDE.md state list | "STOP2 sleep still to do, busy main loop" | r5 (verified r6) |
+| ROADMAP.md Phase 5 | same, plus ungated rails | r5 / r10 |
+| README.md | same | r5 |
+| CONFIG.md | `WS` on EXTI5/PB5 via `pulse_counter`; sleep "Phase 5"; `R`/`WS` both block | r12: burst on A4, only `R` blocks |
+| CLAUDE.md + PINOUT.md peripheral summaries | EXTI5 wind, IN1 battery | r12: EXTI3 only; IN1 = wind burst, IN0 = battery |
+
+Lesson, same as r15's: the update rule reliably catches documents *named in the
+change*, and misses ones that merely *mention* the changed fact. The sweep
+(grep for the old fact across the whole corpus) is now part of the r-bump
+verification step in [§0.3](#03-how-this-document-is-maintained).
 
 ### 2026-08-04 — ARCHITECTURE.md rewritten as the program-flow document (r15)
 

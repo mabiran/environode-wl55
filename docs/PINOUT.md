@@ -149,10 +149,12 @@ now the battery divider.
 ## Peripheral inventory (what the firmware instantiates)
 
 `I2C1` (PA9/PA10), `I2C2` (PA12/PA11), `SPI1` (PA5/PA6/PA7 + PA4 CS),
-`ADC` (IN5 leaf, IN4 soil, IN3 vane, IN1 battery — sequential single conversions,
+`ADC` (IN5 leaf, IN4 soil, IN3 vane, IN1 wind-speed burst, IN0 battery —
+sequential single conversions,
 rank 1 re-armed per channel), `RTC` (LSE, also the STOP2 wake-up source),
-`EXTI3` + `EXTI5` (rain, wind), `USART1`, `USART2`, and the inherited `IWDG`
-watchdog. The SubGHz radio + LoRaMAC live entirely on CM0+.
+`EXTI3` (rain only — wind speed is ADC burst-sampled on IN1), `USART1`,
+`USART2`, and the inherited `IWDG` watchdog. The SubGHz radio + LoRaMAC live
+entirely on CM0+.
 
 > **Changed 2026-07-30:** leaf wetness and soil moisture **swapped** channels —
 > leaf is now `ADC_IN5` on **A0** (where the Decagon LWS is wired) and soil

@@ -58,12 +58,14 @@ at every step (`flash.ps1 -Build -NoFlash`).
       `{?}` arriving by downlink is answered on the console only.
 
 ## Phase 5 — Power & robustness
-- [ ] **Low-power sleep: STOP2 + RTC/LPTIM wake — still to do.** The main loop is
-      still busy-wait. The sensor-set config already exposes the predicate + reason
-      string saying whether the current selection *may* sleep: selecting `R` or
-      `WS` forces the node to stay awake (EXTI edge counting), anything else may
-      sleep (`docs/CONFIG.md`).
-- [ ] Gate sensor rails; measure average draw; tune the interval.
+- [x] **STOP2 sleep + RTC wake — done and verified on hardware** (`envnode_power.c`):
+      8 s IWDG-safe chunks, tick catch-up, `nucleo sleep on|off`. Only `R`
+      blocks sleep; `WS` became ADC burst-sampled precisely so it doesn't.
+- [x] Sensor rails gated: VSENS on D4/PB5 (LWS + vane), 15 ms settle, high-side
+      switch only (docs/PINOUT.md).
+- [x] Offline timestamped log in flash (357 records, `nucleo log dump` CSV);
+      SD SPI driver programmed, dormant (LOGBOOK §12A).
+- [ ] Measure actual average draw; tune the interval. **Top open bench item.**
 - [ ] Low-battery behavior (longer interval / alarm uplink).
 - [ ] Confirm IWDG coverage across the sample→uplink→sleep cycle.
 
