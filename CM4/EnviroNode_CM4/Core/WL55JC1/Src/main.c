@@ -75,6 +75,7 @@
 #include "envnode_sensorset.h"         /* "{LW,T1,...,15}" grammar (docs/CONFIG.md) */
 #include "envnode_power.h"             /* STOP2 sleep between measurement cycles */
 #include "envnode_identity.h"          /* compiled-in fallback OTAA identity     */
+#include "envnode_log.h"               /* offline sensor log (flash ring)        */
 #include "sensors/envnode_sensors.h"
 #include "sensors/envnode_payload.h"
 #include "sensors/analog_sensors.h"
@@ -316,6 +317,7 @@ static int  EnvNode_UplinkNow(void);       /* `nucleo uplink now` -> FPort 1   *
 static void EnvNode_ScheduleTick(void);    /* periodic sample + uplink          */
 static void EnvNode_SleepTick(void);       /* STOP2 between cycles when safe    */
 static void EnvNode_SelfTest(void);        /* `nucleo selftest` — pre-flight     */
+static void EnvNode_LogDump(uint32_t max_rows); /* `nucleo log dump` CSV         */
 static void EnvNode_DrainDownlinks(void);  /* config string + FPort-10 commands */
 static void EnvNode_ApplyConfigString(const char *text, size_t len);
 static void EnvNode_PrintPowerVerdict(const char *prefix);
@@ -449,6 +451,13 @@ int main(void)
   {
     envnode_config_init();                     /* interval / cal / sensor mask */
     envnode_power_init();                      /* RTC wake-up for STOP2 sleep  */
+    {
+      uint32_t nrec = envnode_log_init();      /* offline sensor log (flash)   */
+      char lm[72];
+      snprintf(lm, sizeof(lm), "LOG   : %lu of %u records (\"nucleo log dump\" for CSV)\r\n",
+               (unsigned long)nrec, (unsigned)ENVLOG_CAPACITY);
+      UART1_Send(lm);
+    }
     env_status_t src = envnode_sensors_init();
     analog_set_winddir_offset((float)envnode_config_get_winddir_offset_deg10() / 10.0f);
     uint8_t present  = envnode_sensors_present();
@@ -1051,6 +1060,18 @@ static int EnvNode_UplinkNow(void)
     UART1_Send("ERR: payload pack failed\r\n");
     return 0;
   }
+
+  /* Offline log FIRST, before any radio involvement: a measurement must reach
+     flash even when the node has never joined — that is the whole point of an
+     offline log. This is also the safe moment for the occasional page erase
+     (every 51st record): the radio is idle here, so the ~20-40 ms stall cannot
+     land inside an RX window. */
+#if defined(HAL_RTC_MODULE_ENABLED)
+  if (!envnode_log_append(rtc_now_epoch2000(), frame)) {
+    UART1_Send("WARN: offline log write failed\r\n");
+  }
+#endif
+
   if (mb->magic != KORERO_MB_MAGIC) {
     UART1_Send("ERR: mailbox not ready (radio core down?)\r\n");
     return 0;
@@ -1217,6 +1238,84 @@ static void EnvNode_ScheduleTick(void)
        is still joining. */
     g_next_due_ms = HAL_GetTick() + (sent ? period_ms : ENVNODE_UPLINK_RETRY_MS);
   }
+}
+
+/**
+  * @brief  Dump the offline log as CSV on the console (`nucleo log dump [n]`).
+  *
+  * One row per record, newest first, decoded with the same offsets/scalings as
+  * docs/PAYLOAD.md — the log stores the transmitted frame verbatim, so this is
+  * the single place log bytes become engineering units. A field whose OK-bit was
+  * clear (sentinel on air) prints as an empty CSV cell, not a fake zero.
+  */
+static void EnvNode_LogDump(uint32_t max_rows)
+{
+  const uint32_t total = envnode_log_count();
+  uint32_t rows = (max_rows == 0u || max_rows > total) ? total : max_rows;
+  char line[192];
+
+  snprintf(line, sizeof(line), "LOG: %lu records stored, printing %lu (newest first)\r\n",
+           (unsigned long)total, (unsigned long)rows);
+  UART1_Send(line);
+  UART1_Send("timestamp,epoch2000,status,batt_V,air1_C,air1_RH,air1_hPa,"
+             "air2_C,air2_RH,air2_hPa,soil_raw,leaf_raw,soil_C,"
+             "wind_ms,wind_dir,gust_ms,rain_tips,rain_mm\r\n");
+
+  for (uint32_t i = 0; i < rows; ++i) {
+    uint32_t ep = 0;
+    uint8_t f[ENVLOG_FRAME_LEN];
+    if (!envnode_log_get(i, &ep, f)) break;
+
+    IWDG->KR = 0x0000AAAAu;      /* a full dump takes seconds on two UARTs */
+
+    /* epoch2000 -> civil date (Gregorian; same convention as make_epoch2000) */
+    uint32_t days = ep / 86400u, rem = ep % 86400u;
+    uint32_t hh = rem / 3600u, mi = (rem % 3600u) / 60u, ss = rem % 60u;
+    uint32_t y = 2000u;
+    for (;;) {
+      uint32_t dy = is_leap((int)y) ? 366u : 365u;
+      if (days < dy) break;
+      days -= dy; y++;
+    }
+    static const uint8_t dim[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    uint32_t mo = 0u;
+    for (; mo < 12u; ++mo) {
+      uint32_t dm = dim[mo] + ((mo == 1u && is_leap((int)y)) ? 1u : 0u);
+      if (days < dm) break;
+      days -= dm;
+    }
+
+    /* Little-endian field getters over the stored frame. */
+    #define G16(o)  ((uint16_t)(f[(o)] | ((uint16_t)f[(o) + 1] << 8)))
+    #define GS16(o) ((int16_t)G16(o))
+    const uint8_t st = f[1];
+
+    int n = snprintf(line, sizeof(line),
+                     "%04lu-%02lu-%02lu %02lu:%02lu:%02lu,%lu,0x%02X,%.3f,",
+                     (unsigned long)y, (unsigned long)(mo + 1u), (unsigned long)(days + 1u),
+                     (unsigned long)hh, (unsigned long)mi, (unsigned long)ss,
+                     (unsigned long)ep, (unsigned)st, (double)G16(2) / 1000.0);
+
+    #define CAT(...) n += snprintf(line + n, sizeof(line) - (size_t)n, __VA_ARGS__)
+    if (st & SENS_OK_AIR1) CAT("%.2f,%.1f,%.1f,", GS16(4) / 100.0, f[6] / 2.0, G16(7) / 10.0);
+    else                   CAT(",,,");
+    if (st & SENS_OK_AIR2) CAT("%.2f,%.1f,%.1f,", GS16(9) / 100.0, f[11] / 2.0, G16(12) / 10.0);
+    else                   CAT(",,,");
+    if (st & SENS_OK_SOIL)   CAT("%u,",   (unsigned)G16(14)); else CAT(",");
+    if (st & SENS_OK_LEAF)   CAT("%u,",   (unsigned)G16(16)); else CAT(",");
+    if (st & SENS_OK_PT1000) CAT("%.2f,", GS16(18) / 100.0);  else CAT(",");
+    if (st & SENS_OK_WIND)   CAT("%.2f,%.1f,%.2f,", G16(20) / 100.0, G16(22) / 10.0, G16(24) / 100.0);
+    else                     CAT(",,,");
+    if (st & SENS_OK_RAIN)   CAT("%u,%.2f", (unsigned)G16(26), G16(28) / 100.0);
+    else                     CAT(",");
+    CAT("\r\n");
+    #undef CAT
+    #undef GS16
+    #undef G16
+
+    UART1_Send(line);
+  }
+  UART1_Send("LOG: end\r\n");
 }
 
 /**
@@ -1906,6 +2005,9 @@ static void Print_MessageSyntax(void)
     "nucleo interval <min>  (uplink period, 1..999, persisted in flash)\r\n",
     "nucleo reset rain      (zero the rain-tip accumulator)\r\n",
     "nucleo selftest        (parser + packer + I2C scan + live read; no gateway)\r\n",
+    "nucleo log             (offline log status: records used / capacity)\r\n",
+    "nucleo log dump [n]    (CSV of every logged reading, newest first)\r\n",
+    "nucleo log erase       (wipe the offline log)\r\n",
     "nucleo sleep on|off    (STOP2 between cycles; off keeps the console live)\r\n",
     "-- Sensor set: what to measure, how often (docs/CONFIG.md) --\r\n",
     "nucleo set {LW,T1,T2,SM,ST,WS,WD,R,15}   (replace the set + interval)\r\n",
@@ -2031,6 +2133,27 @@ static void Console_HandleLine(const char *line_in) {
   if (strstr(cmd, "nucleoresetrain")) {
     pulse_reset_rain();
     UART1_Send("ACK: rain accumulator cleared\r\n");
+    return;
+  }
+  /* Offline sensor log. Ordering matters: "logdump"/"logerase" contain "log",
+     so the bare status command is checked last. */
+  if (strstr(cmd, "nucleologdump")) {
+    const char *p = strstr(cmd, "nucleologdump") + strlen("nucleologdump");
+    long want = strtol(p, NULL, 10);          /* 0 / absent = everything */
+    EnvNode_LogDump((want > 0) ? (uint32_t)want : 0u);
+    return;
+  }
+  if (strstr(cmd, "nucleologerase")) {
+    UART1_Send(envnode_log_erase_all() ? "ACK: offline log erased\r\n"
+                                       : "ERR: log erase failed\r\n");
+    return;
+  }
+  if (strstr(cmd, "nucleolog")) {
+    char lm[96];
+    snprintf(lm, sizeof(lm),
+             "LOG: %lu of %u records used (ring; oldest page recycles when full)\r\n",
+             (unsigned long)envnode_log_count(), (unsigned)ENVLOG_CAPACITY);
+    UART1_Send(lm);
     return;
   }
   /* Pre-flight check — proves the parser, the packer, both I2C buses and a live

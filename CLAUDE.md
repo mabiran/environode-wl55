@@ -75,11 +75,16 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
       downlinked `{?}` is answered on the console only).
 
 ## Non-volatile layout (CM4 flash, reserved in STM32WL55JCIX_FLASH.ld)
-`FLASH` is declared as **124K** so these two pages are never used by code:
+`FLASH` is declared as **110K** so these pages are never used by code:
 | Page | Address | Contents | Module |
 |---|---|---|---|
+| 55–61 | `0x0801B800` | **offline sensor log** — 357 timestamped 30-byte frames, ring, oldest page recycles. `nucleo log dump` = CSV | `envnode_log.c` |
 | 62 | `0x0801F000` | interval, calibration offsets, **sensor-set mask**, vane offset | `envnode_config.c` |
 | 63 | `0x0801F800` | AppKey / DevEUI / JoinEUI | `envnode_keystore.c` |
+The WL55 has **no USB peripheral** — the USB drive that appears when the board is
+plugged in is the ST-LINK programmer's, and the node can neither write files to it
+nor host a memory stick. Offline logs come out over the console (`nucleo log
+dump`); true removable media would need an SD card on SPI1.
 Backup registers are still the fast path for the keys; flash is the fallback that
 survives power loss (VBAT rides VDD on this board). `flash.ps1` only erases the
 sectors the ELF covers, so re-flashing the app keeps both pages.

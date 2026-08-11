@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r12 — 2026-08-04 |
+| **Revision** | r13 — 2026-08-04 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -651,6 +651,7 @@ configuration through a power cut, and through a firmware re-flash.
 
 | Page | Address | Contents | Written when |
 |---|---|---|---|
+| 55–61 | `0x0801B800` | **offline sensor log** — 357 timestamped frames, ring | every measurement cycle |
 | 62 | `0x0801F000` | sensor set, interval, calibration offsets, vane offset | an accepted config change |
 | 63 | `0x0801F800` | AppKey, DevEUI, JoinEUI *(node id planned — [§14](#14-build-log))* | provisioning only |
 
@@ -776,6 +777,9 @@ command set is mirrored on USART1 (D0/D1).
 | `nucleo selftest` | parser + packer vectors, dual-bus I²C scan, live read — **no gateway needed** |
 | `nucleo sleep on\|off` | STOP2 between cycles; `off` keeps the console continuously live for bench work |
 | `nucleo lorawan forget` | clear stored keys, revert to the compiled-in identity |
+| `nucleo log` | offline log status (records used / 357) |
+| `nucleo log dump [n]` | CSV of logged readings, newest first — save the console output as `.csv` |
+| `nucleo log erase` | wipe the offline log (do this before a deployment) |
 | `nucleo report` | dump the persistent event log (boots, reset causes) |
 | `nucleo version` | firmware version |
 | `nucleo deveui` | DevEUI the radio core is using |
@@ -1339,6 +1343,55 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-04 — Offline timestamped logging in flash; the USB question answered (r13)
+
+Requirement: every sensor reading logged offline with a timestamp, readable when
+LoRaWAN is absent — ideally "plug in a USB stick and copy the log".
+
+**The hardware fact that reshaped it.** The STM32WL55 has **no USB peripheral**
+(verified in the CubeMX MCU database: zero USB IPs — the WL die spends that area
+on the sub-GHz radio). The mass-storage drive that appears when the board is
+plugged in belongs to the **ST-LINK programmer chip**, which exposes it for
+drag-and-drop flashing; the WL55 cannot write files to it. Nothing on this board
+can act as a USB host either, so a memory stick cannot be mounted. **"Node
+appears as a USB drive" and "node reads a USB stick" are both unbuildable on
+this MCU** — the honest alternatives are the console dump (implemented, below)
+or an SD card on SPI1 with a FAT filesystem (the true removable-media path,
+open item; SPI1 is already up for the MAX31865, an SD card adds one CS pin).
+
+**What was built** (`envnode_log.{h,c}`, flash pages 55–61, 14 KB):
+
+- Every measurement cycle appends `epoch2000 + the 30-byte frame, verbatim` —
+  the log stores exactly what the radio transmits, so the two can never
+  disagree, and decoding lives in one place (the dump).
+- **357 records**, ring: when full, the oldest page (51 records) is erased and
+  logging continues. ≈ 3.7 days at the 15-min field interval.
+- The append runs **before any radio involvement** — a node that never joined
+  still logs. It is also the moment the radio is idle, so the occasional page
+  erase (~20–40 ms, every 51st record) cannot land in an RX window.
+- A torn write (power lost mid-append) fails its checksum and is skipped on
+  boot; the head is re-found by newest-timestamp scan.
+- **Console:** `nucleo log` (status), `nucleo log dump [n]` (CSV, newest first,
+  sentinel fields as empty cells), `nucleo log erase`. The dump feeds the
+  watchdog per row — a full dump on both UARTs takes seconds.
+- Timestamps are RTC seconds since 2000-01-01: **set the clock**
+  (`nucleo time is DD/MM/YYYY HH:MM:SS`) or records order correctly but carry
+  the wrong absolute date. An RTC coin cell (SB21 removed, [§7.2](#72-vbat-and-the-backup-registers))
+  makes the clock survive power cuts.
+- `FLASH` shrank 124K → **110K**; image ~101 KB leaves ~8.5 KB headroom.
+
+**Workflow to retrieve data in the field:** plug in the same USB cable, open the
+VCP at 115200, type `nucleo log dump`, save the console output as `.csv`, open
+in Excel/R. No gateway required.
+
+**Verified:** build green both cores. **Not yet run on hardware — the board was
+unplugged mid-session**; flash + `log dump` verification is the first action
+when it returns.
+
+**Replicator impact:** nothing to wire. Know that the log lives in pages 55–61,
+survives re-flashing (`flash.ps1` erases only the image sectors), and that
+`nucleo log erase` is the clean-slate command before a deployment.
 
 ### 2026-08-04 — Wind speed moved to ADC burst sampling; `WS` no longer blocks sleep (r12)
 
