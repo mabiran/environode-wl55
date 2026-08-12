@@ -137,7 +137,7 @@ only a *failed* read raises the fault bit.
 | Air T/RH/P ×2 | 2 × Bosch BME280 | I²C2 (shield) + I²C1 (board pins) | both answer at 0x76/0x77 → **two buses**, not straps |
 | Leaf wetness | Decagon LWS (METER PHYTOS 31) | ADC, A0 | **dielectric**, not resistive; ratiometric output 10–50 % of excitation; wants *pulsed* excitation |
 | Soil moisture | analog probe | ADC, A1 | raw counts on air; curve applied off-node |
-| Soil temperature | PT1000 + MAX31865 | SPI1 | R_ref must be 4.02 kΩ; one-shot conversions, bias off between |
+| Soil temperature | PT1000 + MAX31865 | SPI1 | **dropped from this node (LOGBOOK r18)** — no board fitted, SPI1 serves the SD card; driver kept for a future node (R_ref 4.02 kΩ) |
 | Wind speed | Davis 7911 contact | ADC, A4 (burst-sampled) | 1 Hz = 2.25 mph from the datasheet; see §7.3 |
 | Wind direction | Davis 7911 vane pot | ADC, A3 | 20 kΩ linear, 0 Ω = north; 1 MΩ dead-band pull-down |
 | Rainfall | tipping bucket | EXTI, D3 | edge-counted; the one sensor that forbids sleep |
@@ -292,17 +292,22 @@ divider it replaced leaked 184 µA continuously and measured only voltage
 ## 8 · Data management
 
 Every cycle's frame is appended, verbatim and RTC-timestamped, to a flash ring
-(pages 55–61; 357 records; oldest page recycles when full — steady-state 2.1 to
-2.5 days at a 10-minute interval, scaling linearly with the interval). The log
-is the *transmitted bytes*, so log and radio cannot disagree; decoding happens
-once, at dump time. Retrieval is `nucleo log dump` → CSV over the same USB
-cable that powers the board; torn writes fail checksum and are skipped.
+(pages 59–61; 153 records — shrunk from 7 pages/357 to make room for FatFs;
+oldest page recycles when full — roughly a day at a 10-minute interval, scaling
+linearly with the interval). The log is the *transmitted bytes*, so log and
+radio cannot disagree; decoding happens once, at dump time. Retrieval is
+`nucleo log dump` → CSV over the same USB cable that powers the board; torn
+writes fail checksum and are skipped.
 
 The WL55's lack of USB (§2) closes the "node as USB drive / node reads a USB
-stick" path permanently. The removable-media successor is an **SD card on
-SPI1**: its low-level driver is written, compiled and probe-able today
-(`nucleo sd`), with the FAT layer, flash budget plan and enable procedure
-specified in LOGBOOK [§12A](LOGBOOK.md#12a-future-functionality--sd-card-mass-logging).
+stick" path permanently. The removable medium is an **SD card on SPI1**, now
+in service: FatFs writes a daily `YYYYMMDD.CSV` (one row per cycle, synced per
+row) and a `CONFIG.INI` on the card can provision the LoRaWAN identity in the
+field. The card was brought up the hard way — SPI mode, a dead card, missing
+decoupling and a chip-select wire soldered one header pin off (found
+electrically, `nucleo cshunt`) — the full account is LOGBOOK r18. The flash
+ring remains the card-failed fallback
+(LOGBOOK [§12A](LOGBOOK.md#12a-future-functionality--sd-card-mass-logging)).
 
 ---
 

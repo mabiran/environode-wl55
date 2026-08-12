@@ -36,11 +36,12 @@ shared SRAM2 mailbox (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 | 1 | Air T/RH/P **(A)** | BME280 #1 | **I²C2** *(shield)* | PA12 SCL / PA11 SDA | Grove I²C socket, addr `0x76`/`0x77` |
 | 2 | Air T/RH/P **(B)** | BME280 #2 | **I²C1** *(board pins)* | PA9 SCL / PA10 SDA | hand-wired; second bus dodges the address clash |
 | 3 | Leaf wetness | **Decagon LWS** (3-wire analog) | **ADC_IN5** | PB1 (**A0**) | Grove A0 socket; ratiometric output, excite from 3V3 — see [SENSORS.md](SENSORS.md) |
-| 4 | Soil moisture | capacitive/resistive probe | **ADC_IN4** | PB2 (A1) | long sampling time; needs calibration curve |
+| 4 | Soil moisture | **Decagon 10HS** (3-wire analog) | **ADC_IN4** | PB2 (**A1**) | shares the Grove A0 socket with the LWS (A0+A1); output 300–1250 mV regulated; **12 mA** — power from the switched rail, never a GPIO — see [SENSORS.md](SENSORS.md) |
 | 5 | Wind **direction** | **Davis 7911** vane pot (20 kΩ) | **ADC_IN3** | PB4 (**A3**) | green = wiper; 0 Ω = N, 10 k = S; 1 MΩ pull-down for the dead band |
 | 6 | Battery voltage | resistor divider | **ADC_IN0** | PB13 (**A5**) | fallback; primary is the INA219 bus voltage. Moved off A4 to free it for wind speed |
 | 6b | Battery V + I | INA219 | **I²C2** | PA12/PA11 | addr `0x45`, R_shunt 0.1 Ω *(reused)* |
-| 7 | Soil temperature | **PT1000 RTD** + MAX31865 | **SPI1** | PA5 SCK / PA6 MISO / PA7 MOSI, CS PA4 | D13/D12/D11/D10 — plain Arduino SPI |
+| 7 | Soil temperature | **PT1000 RTD** + MAX31865 | **SPI1** | PA5 SCK / PA6 MISO / PA7 MOSI, CS PA4 | **dropped from this node 2026-08-13** — no board fitted; SPI1 serves the SD card |
+| 7b | Offline CSV log | **SD card** (SPI mode) | **SPI1** | PA5 SCK / PA6 MISO / PA7 MOSI, **CS PB8 (D5)** | mode 0, init ≤400 kHz then 2 MHz; ~10 k pull-up on CS; FAT32 ≤32 GB; 3V3 direct (12–35 mA writes) |
 | 8 | Rain | tipping-bucket reed | **GPIO EXTI3** | PB3 (D3) | pull-up, falling edge, SW debounce |
 | 9 | Wind **speed** | **Davis 7911** contact closure | **ADC_IN1** *(burst-sampled)* | PB14 (**A4**) | black = contact to GND; 47 kΩ pull-up at the connector; 1 Hz = 2.25 mph. Sampled ~1 kHz for 3 s so the node can still sleep |
 | — | LoRaWAN | SubGHz (internal) | **CM0+ radio core** | — | AU915 FSB2 (match TTN) |
@@ -121,11 +122,13 @@ because it uses the NPN most people already have; Option B is the better circuit
 
 ## Free pins (room for the sensors added later)
 
-`PB8` (D5) · `PB12` (D2) · `PB5` (D4) · `PA15` · `PA0` · `PA1` ·
+`PB12` (D2) · `PA15` · `PA0` · `PA1` ·
 `PA8` · `PB15` · `PC0` · `PC6` · `PB10` (D6) · `PC1` (D7).
 
-`PB5` (D4) freed on 2026-07-30 when wind speed moved to PB14/A4; `PB13` (A5) is
-now the battery divider.
+`PB5` (D4) is the switched-rail enable (VSENS). `PB8` (D5) became the SD card's
+chip-select on 2026-08-13 — the pigtail's CS wire was soldered there (one
+mirror-count off from the intended D2) and the firmware was repointed to match,
+so `PB12` (D2) is free again.
 
 `PB10`/`PC1` were the inherited Pi-wake / Pi-power outputs; that code is gone from
 `main.c` and nothing drives them any more.
@@ -143,8 +146,9 @@ now the battery divider.
 - **ADC clock:** the core runs HSI 16 MHz at voltage scale 2, so the ADC is
   clocked PCLK/4 = 4 MHz with a 160.5-cycle sampling time (~40 µs) — long enough
   for the high-impedance soil/leaf probes.
-- **Power:** budget ADC excitation + 2× BME280 + MAX31865 + LoRa TX peaks; gate
-  sensor rails where possible and sample in bursts (solar/battery node).
+- **Power:** budget ADC excitation (10HS alone is 12 mA) + 2× BME280 + SD-card
+  writes + LoRa TX peaks; gate sensor rails where possible and sample in bursts
+  (solar/battery node).
 
 ## Peripheral inventory (what the firmware instantiates)
 

@@ -63,8 +63,9 @@ at every step (`flash.ps1 -Build -NoFlash`).
       blocks sleep; `WS` became ADC burst-sampled precisely so it doesn't.
 - [x] Sensor rails gated: VSENS on D4/PB5 (LWS + vane), 15 ms settle, high-side
       switch only (docs/PINOUT.md).
-- [x] Offline timestamped log in flash (357 records, `nucleo log dump` CSV);
-      SD SPI driver programmed, dormant (LOGBOOK §12A).
+- [x] Offline timestamped log in flash (153 records, `nucleo log dump` CSV);
+      SD CSV logging **live** — FatFs, daily files, CONFIG.INI provisioning,
+      CS on D5/PB8 (LOGBOOK §12A + r18).
 - [ ] Measure actual average draw; tune the interval. **Top open bench item.**
 - [ ] Low-battery behavior (longer interval / alarm uplink).
 - [ ] Confirm IWDG coverage across the sample→uplink→sleep cycle.

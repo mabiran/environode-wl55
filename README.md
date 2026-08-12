@@ -19,13 +19,13 @@ timetable**.
 | Config key | Quantity | Sensor | Interface |
 |---|---|---|---|
 | `T1` / `T2` | Air temp / humidity / pressure ×2 | 2× **BME280** | **I²C2** (Grove shield) and **I²C1** (board pins) |
-| `SM` | Soil moisture | analog probe | ADC |
-| `LW` | Leaf wetness | resistive grid | ADC |
-| `WD` | Wind direction | vane potentiometer | ADC |
-| `ST` | Soil temperature | **PT1000** RTD | **MAX31865** over SPI |
+| `SM` | Soil moisture | **Decagon 10HS** (capacitance/FDR) | ADC (A1) |
+| `LW` | Leaf wetness | **Decagon LWS** (dielectric) | ADC (A0) |
+| `WD` | Wind direction | **Davis 7911** vane potentiometer | ADC (A3) |
+| `ST` | Soil temperature | **PT1000** RTD via MAX31865 | *dropped from this node — driver kept* |
 | `R` | Rainfall | tipping bucket | GPIO pulse count (EXTI) |
-| `WS` | Wind speed + gust | anemometer | GPIO pulse count (EXTI) |
-| — | Battery voltage | divider + INA219 | ADC / I²C — always sent |
+| `WS` | Wind speed + gust | **Davis 7911** contact closure | ADC burst-sampled (A4) |
+| — | Battery voltage | INA219 | I²C — always sent |
 
 ## Configuring it
 

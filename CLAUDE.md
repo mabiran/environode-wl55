@@ -6,10 +6,12 @@ repo root. Read this first, then `docs/`.
 ## What this is
 A new IoT **agrometeorological sensor node** on **STM32WL55JC** over **LoRaWAN**,
 bidirectional. It periodically measures: air temp/humidity/pressure ×2 (2× BME280
-on **two separate I²C buses**), soil moisture (ADC), leaf wetness (ADC), battery
-voltage (ADC), wind direction (vane potentiometer, ADC), soil temperature
-(**PT1000 via MAX31865 SPI**), rainfall (tipping-bucket pulse count), and wind
-speed (anemometer pulse count). Uplinks a compact frame; accepts downlink config.
+on **two separate I²C buses**), soil moisture (**Decagon 10HS**, ADC A1), leaf
+wetness (**Decagon LWS**, ADC A0), battery (INA219, I²C), wind direction (Davis
+7911 vane pot, ADC A3), rainfall (tipping-bucket pulse count), and wind speed
+(7911 contact, ADC burst-sampled on A4). Soil temperature (`ST`, PT1000 via
+MAX31865) stays in the SPEC but the **hardware is dropped from this node**.
+Uplinks a compact frame; accepts downlink config.
 Which sensors run, and how often, is set by one ASCII **sensor-set config string**
 in braces — `{T1,T2,ST,60}` — over downlink or console (`docs/CONFIG.md`).
 
@@ -53,9 +55,11 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
       init is hand-written in `i2c.c` / `spi.c` / `adc.c` / `gpio.c`, which is
       why CubeMX is not needed; regenerating an `.ioc` would overwrite these).
 - [x] Peripherals up: **I²C1** PA9/PA10 (BME280 #2, board pins), **I²C2** PA12/PA11
-      (BME280 #1 via Grove shield + INA219), **SPI1** PA5/6/7 + CS PA4 (MAX31865),
-      **ADC** PB1 leaf / PB2 soil / PB4 vane / PB14 wind-burst / PB13 batt,
-      **EXTI3** PB3 (rain — the only interrupt-counted sensor).
+      (BME280 #1 via Grove shield + INA219), **SPI1** PA5/6/7 (SD card, **CS
+      PB8/D5** — the pigtail landed there, firmware follows it; mode 0 per
+      transaction), **ADC** PB1 leaf / PB2 soil (10HS) / PB4 vane / PB14
+      wind-burst / PB13 batt, **EXTI3** PB3 (rain — the only interrupt-counted
+      sensor). MAX31865 dropped; PA4 parked.
 - [x] Sensor drivers implemented: `bme280` (Bosch compensation, forced mode),
       `max31865` (PT1000, one-shot + bias off, CVD + sub-zero), `analog_sensors`,
       `pulse_counter` (debounce, atomic snapshot, 3 s gust buckets).
@@ -78,14 +82,21 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
 - [x] Offline sensor log: flash ring pages 59–61, 153 timestamped frames,
       `nucleo log dump` = CSV. The WL55 has **no USB** — the
       MSD drive belongs to the ST-LINK; console CSV is the retrieval path.
-- [x] **SD-card CSV logging LIVE** (`envnode_sdlog.c` + FatFs R0.12c -Os): daily
-      `YYYYMMDD.CSV`, f_sync per row, and `CONFIG.INI` credentials that outrank
-      every stored identity (field provisioning by card). `nucleo sd` = status.
+- [x] **SD-card CSV logging LIVE and hardware-verified** (`envnode_sdlog.c` +
+      FatFs R0.12c -Os): daily `YYYYMMDD.CSV`, f_sync per row, and `CONFIG.INI`
+      credentials that outrank every stored identity (field provisioning by
+      card). `nucleo sd` = status + auto-diagnostics; `nucleo cshunt`/`pinhunt`
+      = wiring bring-up aids; **FAT32 ≤32 GB only** (exFAT compiled out).
+      Full four-fault bring-up saga: LOGBOOK r18.
+- [x] **Decagon 10HS soil moisture on A1** (in the default set `{LW,T1,T2,SM,1}`):
+      300–1250 mV regulated output, 12 mA — power from the switched rail,
+      never a GPIO. Curve applied off-node (LOGBOOK r19, SENSORS.md §3).
+- [x] B1 button = sleep off (bench), B2 = sleep on (normal schedule).
 - [ ] FPort-2 diagnostic uplink (`get_config` returns ENV_NOTIMPL until then; a
       downlinked `{?}` is answered on the console only).
-- [ ] Pending the board's return: verify offline log + SD probe on hardware;
-      BME280s/INA219 still not answering on either I²C bus (suspect shield
-      seating / 3V3 selector).
+- [ ] BME280s answer only intermittently on the bench (I²C contact — hardware,
+      not firmware); 7911 + 10HS not yet bench-tested; pre-r17 nodes need one
+      `nucleo log erase` (the ring moved onto dirty flash).
 
 ## Non-volatile layout (CM4 flash, reserved in STM32WL55JCIX_FLASH.ld)
 `FLASH` is declared as **118K** so these pages are never used by code:

@@ -69,13 +69,19 @@ env_status_t analog_read_all(uint16_t *soil_raw, uint16_t *leaf_raw, float *batt
   uint16_t raw = 0u;
 
   /* Power the excitation rail and let it settle before converting anything.
-     The LWS specifies a 10 ms minimum excitation time; sampling early returns a
-     partially-settled value that looks like a plausible dry reading, which is
-     the worst kind of wrong. ANALOG_RAIL_SETTLE_MS carries margin over that. */
+     The LWS and the 10HS both specify a 10 ms minimum excitation/measurement
+     time; sampling early returns a partially-settled value that looks like a
+     plausible dry reading, which is the worst kind of wrong.
+     ANALOG_RAIL_SETTLE_MS carries margin over that. */
   analog_rail(1);
   HAL_Delay(ANALOG_RAIL_SETTLE_MS);
 
-  /* Soil moisture — raw counts; the probe's curve is applied off-node. */
+  /* Soil moisture — Decagon 10HS on A1. Its onboard regulator makes the
+     output (300..1250 mV) independent of excitation, so raw counts convert to
+     mV directly (mV = counts*3300/4095); Decagon's mineral-soil polynomial is
+     applied off-node. NOTE it draws ~12 mA while excited — a bare GPIO rail
+     sags under that, so the probe's supply must come from the high-side
+     switch or 3V3 direct, never from the PB5 pin itself (docs/SENSORS.md). */
   if (ADC_ReadChannelAvg(ENVNODE_ADC_CH_SOIL, ANALOG_OVERSAMPLES, &raw) == HAL_OK) {
     *soil_raw = raw;
   } else {

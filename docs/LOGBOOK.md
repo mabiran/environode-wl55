@@ -12,11 +12,11 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r17 — 2026-08-04 |
+| **Revision** | r19 — 2026-08-13 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
-| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console and self-test all verified on the board; sensors not yet wired, no gateway yet. See [§14](#14-build-log) r6 |
+| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry — datasheet bullseye), flash ring and **SD CSV logging** all verified on the board. BME280s answer intermittently (I²C contact); no gateway yet. See [§14](#14-build-log) r18 |
 | **Repository** | `Hardware/EnviroNode-WL55` (private) |
 
 ---
@@ -126,12 +126,11 @@ graph LR
   subgraph Field["Field hardware"]
     BME1["BME280 #1<br/>air T/RH/P"]
     BME2["BME280 #2<br/>air T/RH/P"]
-    SOIL["Soil moisture<br/>(analog)"]
-    LEAF["Leaf wetness<br/>(analog)"]
-    VANE["Wind vane<br/>(analog)"]
-    RTD["PT1000 probe"]
+    SOIL["Soil moisture<br/>Decagon 10HS (analog)"]
+    LEAF["Leaf wetness<br/>Decagon LWS (analog)"]
+    VANE["Wind vane<br/>7911 pot (analog)"]
     RAIN["Tipping bucket<br/>(reed)"]
-    ANEM["Anemometer<br/>(reed)"]
+    ANEM["Anemometer<br/>7911 (contact)"]
     BATT["Battery + solar"]
   end
 
@@ -146,10 +145,10 @@ graph LR
   SOIL --> CM4
   LEAF --> CM4
   VANE --> CM4
-  RTD -->|SPI1 + MAX31865| CM4
+  SD["SD card (CSV log)"] <-->|"SPI1, CS D5"| CM4
   RAIN -->|EXTI3| CM4
-  ANEM -->|EXTI5| CM4
-  BATT -->|ADC + INA219| CM4
+  ANEM -->|"ADC burst"| CM4
+  BATT -->|I2C2 INA219| CM4
 
   CM0 -->|"LoRaWAN AU915"| GW["Gateway"]
   GW --> TTN["The Things Network"]
@@ -161,13 +160,13 @@ graph LR
 | Channel | Sensing element | Config key |
 |---|---|---|
 | Air temperature / humidity / pressure ×2 | 2 × BME280 on separate I²C buses | `T1`, `T2` |
-| Soil moisture | analog probe | `SM` |
-| Leaf wetness | resistive grid | `LW` |
-| Soil temperature | PT1000 RTD via MAX31865 | `ST` |
-| Wind speed + gust | anemometer reed | `WS` |
-| Wind direction | vane potentiometer | `WD` |
+| Soil moisture | **Decagon 10HS** (capacitance/FDR, 3-wire analog) | `SM` |
+| Leaf wetness | **Decagon LWS** (dielectric, 3-wire analog) | `LW` |
+| Soil temperature | PT1000 RTD via MAX31865 — **dropped from this node, r18** | `ST` |
+| Wind speed + gust | Davis 7911 contact closure, ADC burst-sampled | `WS` |
+| Wind direction | Davis 7911 vane potentiometer (20 kΩ) | `WD` |
 | Rainfall | tipping-bucket reed | `R` |
-| Battery voltage (+ current) | divider + INA219 | always on |
+| Battery voltage (+ current) | INA219 (divider deliberately not fitted, D-20) | always on |
 
 Two BME280s are used on **two separate I²C buses** because both chips answer at
 the same address pair (`0x76`/`0x77`) and the pair must be readable
@@ -199,11 +198,12 @@ audio, no Pi, and no recording timetable. See [D-01](#15-decision-register).
 |---|---|---|---|
 | MCU board | **NUCLEO-WL55JC1** (MB1389, high-band) | 1 | STM32WL55JC, dual-core, integrated SubGHz radio. Region variant must match your gateway band |
 | Shield | **Seeed Grove Base Shield V2** | 1 | Provides Grove sockets on the Arduino headers |
-| RTD front-end | **MAX31865 breakout** | 1 | **Rref must be 4.02 kΩ** for PT1000 — see [D-05](#15-decision-register) |
+| ~~RTD front-end~~ | ~~**MAX31865 breakout**~~ | 0 | **dropped from this node (r18, [D-27](#15-decision-register))**; if a future node fits one, Rref must be 4.02 kΩ ([D-05](#15-decision-register)) |
+| SD logger | 3.3 V-native SD breakout + **FAT32 card ≤32 GB** | 1 | SPI1, CS **D5/PB8**; 10 kΩ CS pull-up, 100 nF+10 µF at the socket ([§12A](#12a-future-functionality--sd-card-mass-logging)) |
 | Battery monitor | **INA219** breakout, addr `0x45` | 1 | On the shield I²C bus; 0.1 Ω shunt |
 | Battery | LiFePO₄ **4S**, ~12 Ah *(confirm)* | 1 | Thresholds in `pins_config.h` assume 4S LiFePO₄ |
 | Solar + charger | *(confirm)* | 1 | Sized in Phase 6 |
-| Battery divider | 56.06 kΩ / 14.711 kΩ *(confirm — measured values)* | 1 | Gain ≈ 4.748, `VBAT_DIVIDER_GAIN` |
+| ~~Battery divider~~ | — | 0 | **deliberately not fitted** — the INA219 supersedes it ([D-20](#15-decision-register)) |
 | I²C pull-ups | 4.7 kΩ ×4 | — | Needed on **both** buses; most BME280 breakouts include them |
 | Programmer | On-board ST-LINK (USB) | 1 | Also the console (VCP) |
 
@@ -214,11 +214,11 @@ audio, no Pi, and no recording timetable. See [D-01](#15-decision-register).
 | Measurement | Part class | Interface | Firmware expects |
 |---|---|---|---|
 | Air T/RH/P ×2 | **BME280** breakout ×2 | I²C | chip id `0x60`, addr `0x76` or `0x77` (auto-probed) |
-| Soil moisture | capacitive or resistive probe *(confirm)* | analog 0–3.3 V | raw 12-bit counts; curve applied off-node |
-| Leaf wetness | **Decagon Devices LWS** (METER; successor **PHYTOS 31**) — dielectric, 3-wire analog | analog into **A0**, excite from **3V3** | raw 12-bit counts; full spec in [SENSORS.md §4](SENSORS.md) |
-| Soil temperature | **PT1000** RTD probe, 2/3/4-wire | via MAX31865 | `MAX31865_RTD_NOMINAL = 1000`, wire count set in firmware |
-| Wind speed | anemometer, reed/hall pulse *(confirm)* | dry contact to GND | `ANEMO_MS_PER_HZ` (default 0.34) |
-| Wind direction | vane potentiometer *(confirm)* | analog 0–3.3 V | linear 0–360°, plus north offset |
+| Soil moisture | **Decagon 10HS** ("EC-10 HS" at Solem) — capacitance/FDR, 3-wire analog | analog into **A1**, excite from **VSENS** (12 mA) | raw 12-bit counts; curve off-node; full spec in [SENSORS.md §3](SENSORS.md) |
+| Leaf wetness | **Decagon Devices LWS** (METER; successor **PHYTOS 31**) — dielectric, 3-wire analog | analog into **A0**, excite from **VSENS** | raw 12-bit counts; full spec in [SENSORS.md §4](SENSORS.md) |
+| ~~Soil temperature~~ | ~~**PT1000** RTD probe~~ | — | **dropped from this node (r18)** |
+| Wind speed | **Davis 7911** contact closure | **A4**, ADC burst-sampled, 47 kΩ pull-up | `ANEMO_MS_PER_HZ = 1.00584` (1 Hz = 2.25 mph) |
+| Wind direction | **Davis 7911** vane pot, 20 kΩ | analog into **A3**, 1 MΩ pull-down | linear 0–360°, plus north offset |
 | Rainfall | tipping bucket, reed *(confirm)* | dry contact to GND | `RAIN_MM_PER_TIP` (default 0.2794 mm) |
 
 ---
@@ -276,37 +276,41 @@ CubeMX MCU database [[R3]](#16-references).
 
 ```
                     NUCLEO-WL55JC1 + Grove Base Shield V2
-   ┌───────────────────────────────────────────────────────────────┐
-   │  Grove I2C  ×4 ──── PA12/PA11 (I2C2) ──── BME280 #1 + INA219  │
-   │  Grove "D3"    ──── PB3 (D3) rain reed                        │
-   │                └─── PB5 (D4) anemometer reed  [one 4-pin cable]│
-   │  A0 PB1 ─── soil moisture       A1 PB2 ─── leaf wetness       │
-   │  A3 PB4 ─── wind vane           A4 PB14 ── battery divider    │
-   │  D13/D12/D11 + D10 ──── MAX31865 ──── PT1000 probe            │
-   │  D9 PA9 + A2 PA10 (I2C1) ──── BME280 #2   [hand-wired]        │
-   │  D8 PC2 ─── status LED                                        │
-   │  FREE: D2 (PB12), D5 (PB8), D6 (PB10), D7 (PC1), A5 (PB13)    │
-   └───────────────────────────────────────────────────────────────┘
+   ┌────────────────────────────────────────────────────────────────┐
+   │  Grove I2C  ×4 ──── PA12/PA11 (I2C2) ──── BME280 #1 + INA219   │
+   │  Grove "D3"    ──── PB3 (D3) rain reed                         │
+   │  Grove "A0"    ──── A0 PB1 leaf (LWS) + A1 PB2 soil (10HS)     │
+   │  Grove "A3"    ──── A3 PB4 vane wiper + A4 PB14 speed contact  │
+   │                     [the 7911's one 4-wire cable]              │
+   │  D13/D12/D11 + D5 (PB8 CS) ──── SD-card breakout               │
+   │  D4 PB5 ─── VSENS gate (Q1 high-side switch)                   │
+   │  D9 PA9 + A2 PA10 (I2C1) ──── BME280 #2   [hand-wired]         │
+   │  D8 PC2 ─── status LED          A5 PB13 ── (divider, not fitted)│
+   │  FREE: D2 (PB12), D6 (PB10), D7 (PC1)                          │
+   └────────────────────────────────────────────────────────────────┘
 ```
 
 **Wiring procedure**
 
-1. Fit the Grove Base Shield to the Arduino headers.
+1. Fit the Grove Base Shield to the Arduino headers — **selector at 3.3 V**.
 2. Plug **BME280 #1** into any Grove I²C socket. Confirm its address strap
    (`0x76` or `0x77`) — either works, the driver probes both.
 3. Hand-wire **BME280 #2**: SCL→D9 (PA9), SDA→A2 (PA10), 3V3, GND. Add 4.7 kΩ
    pull-ups to 3V3 on both lines **unless the breakout already has them**.
 4. Plug the **INA219** into a second Grove I²C socket; set its address to `0x45`.
-5. Wire the **MAX31865** to D13 (SCK), D12 (MISO), D11 (MOSI), D10 (CS), 3V3,
-   GND. Confirm the board carries a **4.02 kΩ** Rref, not the 430 Ω PT100 part —
-   many breakouts ship as PT100. Wire the PT1000 probe per its wire count and set
-   the matching mode in firmware (`ENVNODE_RTD_WIRES`).
-6. Wire the **rain** reed to D3 and the **anemometer** reed to D4, commons to
-   GND. Both are dry contacts; the MCU supplies the pull-up. One 4-pin Grove
-   cable in the "D3" socket carries both.
-7. Wire the analog probes to A0 (soil), A1 (leaf), A3 (vane), each referenced to
-   the board's GND, and the battery divider output to A4.
-8. Do **not** connect anything to PC3/PC4/PC5 — they drive the RF switch.
+5. Wire the **SD breakout** (3.3 V-native): SCK→D13, MISO→D12, MOSI→D11,
+   **CS→D5 (PB8)**, VCC→3V3 direct, GND; ~10 kΩ pull-up on CS, 100 nF + 10 µF
+   across VCC/GND at the breakout. Card: **FAT32** (≤32 GB or reformat — exFAT
+   is compiled out). See §12A.
+6. Wire the **rain** reed to the Grove "D3" socket (PB3), common to GND — dry
+   contact, the MCU supplies the pull-up.
+7. Wire the **Davis 7911**'s single cable to the Grove "A3" socket: green
+   (vane wiper)→A3, black (speed contact)→A4, yellow (pot supply)→VSENS,
+   red→GND. R1 47 kΩ A4→3V3 and R2 1 MΩ A3→GND live at the connector.
+8. Wire the **LWS** (white→VSENS, red→A0, bare→GND) and the **10HS**
+   (white→VSENS, red→A1, bare→GND) into the Grove "A0" socket's two signal
+   pins; both sensors' excitation comes from the switched rail, not socket VCC.
+9. Do **not** connect anything to PC3/PC4/PC5 — they drive the RF switch.
 
 ### 3.3 Free pins
 
@@ -314,11 +318,11 @@ CubeMX MCU database [[R3]](#16-references).
 
 | Pin | Arduino | Note |
 |---|---|---|
-| PB12 | D2 | free |
-| PB8 | D5 | free |
+| PB12 | D2 | free (was the intended SD CS; the wire actually landed on D5 and the firmware followed it) |
 | PB10 | D6 | freed when the Pi wake line was removed |
 | PC1 | D7 | freed when the Pi 5 V enable was removed |
-| PB13 | A5 (ADC_IN0) | free analog channel |
+| PA4 | D10 | was the MAX31865 CS — hardware dropped 2026-08-13; firmware still parks it output-high |
+| PB13 | A5 (ADC_IN0) | free analog channel (divider deliberately not fitted, [D-20](#15-decision-register)) |
 | PA15, PA0, PA1, PA8, PB15, PC0, PC6 | — | not on the Arduino headers |
 
 ---
@@ -368,8 +372,9 @@ if the sign comes out inverted either swap VIN+/VIN− or flip it in software.
 | S2 | **Davis 7911** direction → `WD` | **A3** (PB4) — *green* (wiper) | **VSENS** — *yellow* | **R2 1 MΩ** A3→GND |
 | S3 | **Davis 7911** speed → `WS` | **A4** (PB14) — *black* (contact), **ADC, burst-sampled** | — (switch to GND, *red*) | **R1 47 kΩ** A4→3V3 — **required**, the internal pull-up is unavailable on an analog pin |
 | S4 | Rain tipping bucket → `R` | **D3** (PB3) | — (switch to GND) | internal pull-up; 10 kΩ + 100 nF optional |
-| S5 | MAX31865 + PT1000 → `ST` | SCK **D13**, MISO **D12**, MOSI **D11**, CS **D10** | 3V3 | **Rref must be 4.02 kΩ** (PT1000, not 430 Ω) |
-| S6 | Soil moisture → `SM` *(future)* | **A1** (PB2) | VSENS | per probe |
+| ~~S5~~ | ~~MAX31865 + PT1000 → `ST`~~ | — | — | **dropped 2026-08-13** — no board fitted, SPI1 serves the SD card; `ST` in a config string just raises its fault path |
+| S6 | Decagon **10HS** soil moisture → `SM` | **A1** (PB2) — *red* wire | **VSENS** — *white* (**12 mA!** never a GPIO) | bare→GND; output 300–1250 mV regulated; shares the Grove A0 socket with S1 |
+| S7 | **SD-card breakout** (3.3 V-native) | SCK **D13**, MISO **D12**, MOSI **D11**, CS **D5** (PB8) | 3V3 direct, **not** VSENS | ~10 kΩ pull-up on CS; 100 nF + 10 µF at the breakout; FAT32 card ≤32 GB |
 | — | Status LED | **D8** (PC2) | — | ~1 kΩ series |
 
 **Discretes — the small protoboard**
@@ -391,8 +396,9 @@ if the sign comes out inverted either swap VIN+/VIN− or flip it in software.
 | Battery divider on **A5** (PB13) | the INA219 supersedes it, and 56 k + 14.7 k across ~13 V leaks ~184 µA ≈ 4.4 mAh/day. Leave A5 free. The firmware keeps it as a fallback and simply reads 0 V when absent |
 | Any transistor on a sensor **ground** | a low-side switch lifts the ground by Vce(sat) and corrupts every ground-referenced analog reading ([§15 D-19](#15-decision-register)) |
 
-**Free after all of the above:** `PB8` (D5) · `PB12` (D2) · `PB13` (A5) ·
-`PB10` (D6) · `PC1` (D7) · `PA15` · `PA0` · `PA1` · `PA8` · `PB15` · `PC0` · `PC6`.
+**Free after all of the above:** `PB12` (D2) · `PB13` (A5) ·
+`PB10` (D6) · `PC1` (D7) · `PA4` (D10, parked) · `PA15` · `PA0` · `PA1` ·
+`PA8` · `PB15` · `PC0` · `PC6`.
 
 ## 4. Toolchain and repository setup
 
@@ -780,9 +786,12 @@ command set is mirrored on USART1 (D0/D1).
 | `nucleo selftest` | parser + packer vectors, dual-bus I²C scan, live read — **no gateway needed** |
 | `nucleo sleep on\|off` | STOP2 between cycles; `off` keeps the console continuously live for bench work |
 | `nucleo lorawan forget` | clear stored keys, revert to the compiled-in identity |
-| `nucleo log` | offline log status (records used / 357) |
+| `nucleo log` | offline log status (records used / 153) |
 | `nucleo log dump [n]` | CSV of logged readings, newest first — save the console output as `.csv` |
-| `nucleo log erase` | wipe the offline log (do this before a deployment) |
+| `nucleo log erase` | wipe the offline log (do this before a deployment, and **once after updating a pre-r17 node** — the relocated ring lands on dirty flash otherwise) |
+| `nucleo sd` | probe the card + SD-log status (file, INI credentials); on failure it prints the CMD0 R1 trace and MISO pull-up test automatically |
+| `nucleo pinhunt [0-7]` | bring-up aid: hold D0–D7 (or just Dn) low so a multimeter can find which header hole a mystery wire is in |
+| `nucleo cshunt` | bring-up aid: make each D pin an input with pull-down and report which reads HIGH — finds where an externally pulled-up wire (e.g. the SD CS) actually landed, no meter needed |
 | `nucleo report` | dump the persistent event log (boots, reset causes) |
 | `nucleo version` | firmware version |
 | `nucleo deveui` | DevEUI the radio core is using |
@@ -1064,8 +1073,9 @@ Set these to the parts actually fitted, then re-run the affected test.
 |---|---|---|
 | `air1=n` or `air2=n` at boot | wrong bus, no pull-ups, or address strap | check [Table 4](#32-wiring-map); remember the shield I²C is **I²C2**; scope SCL for clock |
 | Both BME280s read identically | both on the same bus | they must be on separate buses — that is the whole reason for I²C1 |
-| `rtd=n` | MAX31865 not answering on SPI | check CS on D10, and that MISO is D12; a floating MISO reads `0xFF` |
+| `rtd=n` | expected — no MAX31865 is fitted on this node (dropped r18); on a node that has one: CS on D10, MISO on D12 (floating MISO reads `0xFF`) | select a set without `ST`, or fit the board |
 | Soil temp wildly wrong | PT100 board fitted (430 Ω Rref) | fit a 4.02 kΩ Rref board, or change `MAX31865_RREF` |
+| `nucleo sd` finds no card | wrong CS pin, dead card, exFAT ≥64 GB card, or no decoupling | read the automatic R1 trace: `0xFF` = no card/wrong CS (`nucleo cshunt` finds the real pin), `0x00` = stuck-low data line (dead card), `0x01` = card answering (filesystem problem — reformat FAT32) |
 | Soil/leaf counts stuck near 0 or 4095 | probe not powered, or wrong pin | verify against [Table 4](#32-wiring-map) |
 | Rain counts climb with no rain | electrical noise on the reed line | lengthen `RAIN_DEBOUNCE_MS`, add an RC filter, shorten/shield the cable |
 | Gust absurdly high | contact bounce | gust uses 3 s buckets, so suspect wiring; check `WIND_DEBOUNCE_MS` |
@@ -1093,14 +1103,14 @@ FAT32 card any computer reads.
 | Layer | State |
 |---|---|
 | SPI-mode SD driver (`sd_spi.{h,c}`): init, SDHC/SDSC detection, capacity from CSD, single-block read/write | **done** — exercised by `nucleo sd`; safe with no hardware (times out in ~100 ms) |
-| Bus plumbing | done — shares SPI1 with the MAX31865, own CS on **D2/PB12**, init at 250 kHz then back to 2 MHz, CS pin untouched until first probe |
-| FAT filesystem (FatFs), file append, daily rotation | **not built** |
+| Bus plumbing | done — the card is SPI1's only device (MAX31865 dropped); CS on **D5/PB8** (r18 — the pigtail landed there and the firmware followed), **SPI mode 0** switched per transaction (`sd_bus_acquire/release`), init at 250 kHz then 2 MHz |
+| FAT filesystem (FatFs R0.12c), `envnode_diskio.c` glue, `envnode_sdlog.c` daily CSV + CONFIG.INI | **done, in service** (r17; hardware-verified r18) |
 
-**Hardware needed** (from [the parts discussion](#14-build-log)): 3.3 V-native
-microSD breakout (⚠️ not an HW-125 fed 3.3 V — its regulator browns out), card
-≤ 32 GB, 10 kΩ CS pull-up, 100 nF + 10 µF at the breakout. VCC from the
-always-on 3V3, **not** VSENS. Do not use the Grove "D2" socket (its second pin
-is D3 = rain); wire to the header.
+**Hardware** (as fitted, r18): 3.3 V-native SD breakout (⚠️ not an HW-125 fed
+3.3 V — its regulator browns out), **FAT32 card ≤ 32 GB** (exFAT is compiled
+out — a 64 GB card mounts as nothing), ~10 kΩ CS pull-up, 100 nF + 10 µF at
+the breakout. VCC from the always-on 3V3, **not** VSENS. CS is wired to the
+**D5 header pin (PB8)**.
 
 **Enable plan, in order**
 1. Wire the breakout; `nucleo sd` must report the card type and true capacity.
@@ -1123,7 +1133,8 @@ Condensed end-to-end procedure for building node *n+1*.
 
 1. **Parts** — gather everything in [Tables 1–2](#2-bill-of-materials).
 2. **Assemble** — follow the wiring procedure in [§3.2](#32-wiring-map). Double-check
-   the shield-I²C-is-I²C2 trap and the MAX31865 Rref value.
+   the shield-I²C-is-I²C2 trap, the 3.3 V selector, and that the SD CS really
+   lands on the pin the firmware expects (`nucleo cshunt` verifies it).
 3. **Toolchain** — install STM32CubeCLT 1.19.0 ([§4.1](#41-required-software)).
 4. **Clone** the repository; do not regenerate any CubeMX project.
 5. **Build** — `.\flash.ps1 -Build -NoFlash`; expect a green build ([§5](#5-building-and-flashing)).
@@ -1385,6 +1396,89 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-13 — Decagon 10HS soil moisture on A1 (r19)
+
+**What changed.** The `SM` channel got its sensor: a Decagon **10HS** (sold by
+Solem as "EC-10 HS") on **A1 (PB2 / ADC_IN4)** — the channel reserved for soil
+moisture since r8, with nothing wired to it until now. A2 was considered and
+rejected (it is PA10 = I²C1 SDA, BME280 #2's bus). Firmware: `SM` joined the
+default sensor set (canonically `{LW,T1,T2,SM,1}` now), and the console's soil line prints
+**counts and mV** like the leaf line does, because the 10HS is specified in mV.
+Docs: SENSORS.md §3 rewritten for the real sensor, PINOUT.md row 4, the
+assembly bill's S6 row, reference **R13**.
+
+**Why it needed no new driver.** `analog_read_all()` already powered the rail,
+waited `ANALOG_RAIL_SETTLE_MS` (15 ms) and converted A1 — the 10HS's 10 ms
+measurement time and pulsed-excitation discipline are the same as the LWS's.
+
+**What a replicator must know.**
+- **Output 300–1250 mV, independent of excitation** — the 10HS has an onboard
+  regulator, so unlike the ratiometric LWS its millivolt reading is absolute
+  and Decagon's mineral-soil polynomial applies directly:
+  `θ = 2.97e-9·mV³ − 7.37e-6·mV² + 6.69e-3·mV − 1.92` (m³/m³) [R13].
+  Applied off-node; the frame carries raw counts at offset 14.
+- **Power: 3 VDC @ 12 mA minimum** — 3.3 V is barely above the 3.0 V floor and
+  12 mA is far past what a GPIO can source without sagging below it. White
+  wire → **switched rail (VSENS) or 3V3 direct, never a GPIO pin**; red → A1;
+  bare → GND. It shares the Grove A0 socket with the LWS (that socket carries
+  both A0 and A1 signal pins).
+- Expected reading: ≈ 372 counts in dry air up to ≈ 1551 counts at saturation
+  (12-bit, Vref 3.3 V).
+
+### 2026-08-13 — SD card brought up the hard way; CS lives on D5 (r18)
+
+**Where r17 left off:** the code was written and simulated but no card had ever
+answered on the bench. Four independent faults were found, in this order:
+
+1. **SPI mode.** SPI1 was configured CPOL0/CPHA1 (mode 1) for the MAX31865;
+   SD cards require **mode 0**. `sd_bus_acquire()/sd_bus_release()` now switch
+   the phase per transaction and restore it after.
+2. **A dead card.** The first (years-old) card held DAT0 low permanently, so
+   every response byte read `0x00` — and since `0x00` has bit 7 clear, the
+   driver misread it as an instant, valid R1. The `sd_spi_diag()` CMD0 R1 trace
+   (now run automatically when `nucleo sd` fails) was written to expose exactly
+   this: a healthy no-card bus reads `0xFF` (pull-up), a stuck-low bus `0x00`.
+3. **No decoupling.** The pigtail-mounted socket had no capacitors; board
+   photos confirmed it. 100 nF + 10 µF were fitted at the socket.
+4. **The chip-select wire was never on D2.** Soldered from the underside, the
+   CS wire landed one mirror-count off — on **D5 (PB8)**. Found *electrically*,
+   without a meter: `nucleo cshunt` makes each candidate pin an input with the
+   internal ~40 k pull-**down** and reports which one still reads HIGH — only
+   the pin actually attached to the externally pulled-up (12 k) CS net can
+   (≈2.5 V at the divider). It answered `D5 (PB8): HIGH`. The firmware was
+   repointed to PB8 rather than re-soldering a working joint ([D-24](#15-decision-register)).
+   `nucleo pinhunt [0-7]` (hold a chosen D pin low for a meter) was added along
+   the way.
+
+With all four fixed: a 64 GB card still mounted **nothing** — it is exFAT from
+the factory and exFAT is compiled out ([D-25](#15-decision-register)); an 8 GB
+**FAT32** card then mounted first try (`SDHC, 7535 MB … SDLOG: active`) and the
+first CSV row landed in `20260804.CSV`.
+
+**Also in this revision:**
+- **MAX31865 dropped from this node** — no board is fitted (continuity-checked:
+  no beep between the CN5 SPI pins) and none is planned; SPI1 belongs to the SD
+  card. The `ST` key stays valid per the SPEC and simply raises its fault path.
+  PA4/D10 is parked output-high by the otherwise-idle driver init.
+- **B1/B2 buttons control sleep**: a sleeping node's console is dead between
+  cycles, which made every bench session a race. **B1 = sleep off** (always
+  awake), **B2 = sleep on** (normal schedule). Same effect as
+  `nucleo sleep on|off`, no terminal needed.
+- **Pre-r17 nodes need one `nucleo log erase`.** r17 moved the flash ring from
+  pages 55–61 to 59–61; a node that had logged before the move has old data
+  where the new ring lives, and STM32WL flash cannot be programmed over dirty
+  words — every append fails until the one-time erase.
+- Stale text swept: `nucleo sd` banner and `sd_spi.h` header said "CS = D2";
+  Figure 2 and the wiring procedure still showed the pre-r8 A0/A1 swap, the
+  battery divider on A4 and the anemometer as a reed on D4 — all rewritten to
+  as-built truth.
+
+**Replicator impact:** wire the SD CS to **D5 (PB8)** (or any free pin — but
+then repoint `SD_CS_PIN` in `sd_spi.c`), FAT32 card only, fit the decoupling,
+and if a probe fails read the automatic R1 trace before touching the solder:
+`0xFF` = no card / wrong CS, `0x00` = stuck-low data line (dead card),
+`0x01` = the card is actually answering.
 
 ### 2026-08-04 — SD CSV logging + CONFIG.INI provisioning implemented (r17)
 
@@ -1807,7 +1901,13 @@ If you built a node before this date, LW and SM are swapped relative to yours.
 | D-19 | Gate the sensor excitation on the **high** side, never the low side | Sensor outputs are ground-referenced; a low-side switch lifts their ground by Vce(sat) 0.1–0.2 V ≈ 150 counts, and the LWS wet threshold is only ~3 % above dry — it would read permanently wet | A single low-side NPN (the obvious one-transistor circuit); or powering the LWS from a GPIO, whose 0.1–0.2 V droop at 4 mA is the same error again |
 | D-20 | **INA219 for battery, no resistor divider** | One part gives voltage *and* current (so charge/discharge and coulomb counting), and it removes the divider's continuous ~184 µA ≈ 4.4 mAh/day | Divider into the ADC — cheaper, but leaks continuously and cannot measure current |
 | D-21 | Wind speed **burst-sampled on the ADC**, not EXTI-counted | Edge counting pinned the core awake for the whole interval — an estimated ~50–60 mAh/day, roughly 10× the vane pot and pull-up combined. A 3 s burst runs inside the existing awake window, so `WS` no longer blocks sleep | EXTI counting (correct data, but the node can never sleep with wind selected); EXTI wake-from-STOP2 (best of both, but needs the pulse counter moved off `HAL_GetTick` onto RTC/LPTIM — kept as the upgrade path). Cost accepted: 3 s of wind per cycle rather than the whole interval, and gust ≡ mean |
-| D-12 | Keep the dead `pi_pwr_seq`/`pi_pwr_on` fields in `korero_mailbox.h` | The struct is a shared-memory ABI and CM0+ still writes them; removing them from one copy would shift `joined` by 8 bytes and break join reporting silently | Deleting them with the rest of the Pi code — it would have desynchronised the two cores' view of SRAM2 |
+| D-22 | Keep the dead `pi_pwr_seq`/`pi_pwr_on` fields in `korero_mailbox.h` *(was mis-numbered as a second D-12 until r18)* | The struct is a shared-memory ABI and CM0+ still writes them; removing them from one copy would shift `joined` by 8 bytes and break join reporting silently | Deleting them with the rest of the Pi code — it would have desynchronised the two cores' view of SRAM2 |
+| D-23 | SD transactions run in **SPI mode 0**, switched per transaction | SD cards require CPOL0/CPHA0; the bus had been mode 1 for the MAX31865. Switching inside `sd_bus_acquire/release` keeps the bus polite to any future mode-1 device | Leaving the whole bus mode 0 permanently — simpler, but bakes today's device list into the bus config |
+| D-24 | SD CS is **D5 (PB8)** — the firmware follows the solder joint | The pigtail's CS wire landed one mirror-count off from the intended D2; `nucleo cshunt` proved it electrically. Repointing one `#define` beats re-melting a verified joint | Re-soldering to D2 — risks the joint and the pad for zero functional gain |
+| D-25 | **FAT32 only** (`_FS_EXFAT 0`, 8.3 names) | exFAT support costs flash the 118 K budget does not have, and FAT32 covers ≤32 GB — years of CSV. A 64 GB factory card silently mounts nothing, which is now documented rather than supported | Enabling exFAT — blows the flash budget for capacity the node will never fill |
+| D-26 | **B1 = sleep off, B2 = sleep on** hardware buttons | A sleeping node's console wakes for ~10 s per cycle, making bench sessions a race; a button needs no terminal and works mid-race | Console-only control (`nucleo sleep off`) — needs the console to be awake, which is the very problem |
+| D-27 | **MAX31865 dropped from this node**; `ST` stays in the SPEC | No board fitted, none planned, and SPI1 is the SD card's now. Keeping `ST` valid costs nothing (fault path) and keeps the config grammar stable for a future node that fits one | Ripping `ST` out of the SPEC and payload — breaks frame compatibility for one absent sensor |
+| D-28 | 10HS excitation from the **switched rail**, mV conversion on-node, curve off-node | 12 mA is 3× the LWS — a GPIO would sag below the sensor's 3.0 V floor (D-19's logic, harder). The regulated output makes mV absolute, so the console prints mV, but the polynomial stays off-node where it can be refined without reflashing | Wiring to socket VCC (continuous ~12 mA ≈ 288 mAh/day); applying the cubic on-node (locks the calibration into the firmware) |
 
 ---
 
@@ -1829,9 +1929,11 @@ If you built a node before this date, LW and SM are swapped relative to yours.
 | R10 | The Things Network documentation | Device registration, payload formatters, downlink queueing |
 | R11 | **METER PHYTOS 31 manual** (20434) + legacy **Decagon LWS** Operator's Manuals (2007 v2, Feb 2016) + Campbell Scientific LWS manual | Leaf-wetness sensor: 2.5–5.0 V excitation, 10–50 % ratiometric output, 445 counts dry, pulsed-excitation requirement, wire colours |
 | R12 | **Davis Instruments DS7911 Rev G** — *7911 Anemometer* spec sheet. Local copy: `Anemometer 7911_SS.pdf` | Wind speed `V = P(2.25/T)`, 1600 rev/hr = 1 mph, 20 kΩ direction pot, wire colours, cable limits |
+| R13 | **Decagon 10HS Operator's Manual** (10HS soil moisture sensor; the probe Solem sells as "EC-10 HS") | Soil moisture: 3 VDC @ 12 mA–15 VDC @ 15 mA, 300–1250 mV regulated output, 10 ms measurement time, mineral-soil calibration polynomial, wire colours |
 
-**Open items** are tracked in [ROADMAP.md](ROADMAP.md). The largest at r4:
-low-power STOP2 sleep (Phase 5), the FPort-2 diagnostic uplink, hardware bench
-testing of every channel, and implementing the node id from [D-10](#15-decision-register).
+**Open items** are tracked in [ROADMAP.md](ROADMAP.md). The largest at r19:
+the intermittent BME280 I²C contact, TTN join against a real gateway, the
+current-draw measurement, the FPort-2 diagnostic uplink, and implementing the
+node id from [D-10](#15-decision-register).
 Minor: the inherited `LoRaMacMibSetRequestConfirm` implicit declaration in CM0+
 `lora_app.c` (see [§14](#14-build-log), r4).

@@ -3,23 +3,24 @@
   * @file    sd_spi.h
   * @brief   SD card in SPI mode on SPI1 — low-level driver.
   *
-  *          **Status: programmed, not in service.** The driver is compiled and
-  *          `nucleo sd` will probe a card the day a breakout is wired, but
-  *          nothing logs to SD yet — the FAT filesystem layer is future work
-  *          (docs/LOGBOOK.md "SD-card mass logging"). Until then the flash ring
-  *          (envnode_log.c) is the offline store.
+  *          **Status: in service** — envnode_diskio.c mounts FatFs on these
+  *          block routines and envnode_sdlog.c writes the daily CSV
+  *          (docs/LOGBOOK.md "SD-card mass logging").
   *
-  *          Bus sharing: SPI1 also carries the MAX31865 (CS = PA4). The card
-  *          gets its own CS on **PB12 (Arduino D2)**; both CS lines idle high,
-  *          and the single-threaded main loop guarantees the two never overlap.
-  *          Init temporarily drops SPI1 to ~250 kHz (the SD spec caps the init
-  *          phase at 400 kHz) and always restores the 2 MHz data rate — the
-  *          MAX31865 sees the bus exactly as before.
+  *          Bus: the card is currently the only SPI1 device (the MAX31865 was
+  *          dropped from the build). CS is **PB8 (Arduino D5)** — the pigtail's
+  *          CS wire landed there (one mirror-count off from the intended D2),
+  *          found electrically with `nucleo cshunt` and adopted rather than
+  *          re-soldered. The SD wants SPI mode 0, so sd_bus_acquire()/release()
+  *          set CPOL0/CPHA0 for the transaction and restore the bus after.
+  *          Init runs at ~250 kHz (SD spec caps the init phase at 400 kHz),
+  *          data at 2 MHz.
   *
-  *          Wiring (docs/LOGBOOK.md): SCK D13, MISO D12, MOSI D11 (shared),
-  *          CS D2, VCC 3V3 direct (NOT VSENS), 10 k pull-up on CS, 100 nF+10 µF
-  *          at the breakout. 3.3 V-native breakout only — the HW-125's 5 V
-  *          regulator browns out at 3.3 V.
+  *          Wiring (docs/LOGBOOK.md): SCK D13, MISO D12, MOSI D11, CS D5,
+  *          VCC 3V3 direct (NOT VSENS), ~10 k pull-up on CS, 100 nF+10 µF at
+  *          the breakout. 3.3 V-native breakout only — the HW-125's 5 V
+  *          regulator browns out at 3.3 V. Card: FAT32 (exFAT is compiled out,
+  *          so ≤32 GB or reformat).
   ******************************************************************************
   */
 #ifndef SD_SPI_H
@@ -61,6 +62,7 @@ int sd_spi_probe(sd_info_t *info);
  * @param  lba  logical block address (the driver handles SDHC vs byte addressing).
  * @retval 1 on success, 0 on error/timeout.
  */
+int sd_spi_diag(char *out, unsigned n);   /* raw CMD0 R1 trace for bring-up */
 int sd_spi_read_block(uint32_t lba, uint8_t buf[SD_BLOCK_SIZE]);
 int sd_spi_write_block(uint32_t lba, const uint8_t buf[SD_BLOCK_SIZE]);
 

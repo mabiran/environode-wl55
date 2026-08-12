@@ -12,12 +12,15 @@
   ******************************************************************************
   */
 #include <string.h>
+#include <stdio.h>
 #include "sd_spi.h"
 #include "spi.h"                 /* hspi1 */
 #include "stm32wlxx_hal.h"
 
 #define SD_CS_PORT        GPIOB
-#define SD_CS_PIN         GPIO_PIN_12          /* Arduino D2 */
+#define SD_CS_PIN         GPIO_PIN_8           /* Arduino D5 — the CS wire was
+  soldered one mirror-count off from D2; found electrically (cshunt) and the
+  firmware moved to the wire rather than the wire to the firmware. */
 
 #define SD_INIT_PRESCALER SPI_BAUDRATEPRESCALER_64   /* 16 MHz/64 = 250 kHz    */
 #define SD_DATA_PRESCALER SPI_BAUDRATEPRESCALER_8    /* the bus's normal 2 MHz */
@@ -46,11 +49,19 @@ static void cs_init(void)
   HAL_GPIO_Init(SD_CS_PORT, &g);
 }
 
-static void spi_set_prescaler(uint32_t presc)
+/* SD cards speak SPI MODE 0 (CPOL0/CPHA0); the MAX31865 owns the bus's normal
+   mode 1. Every SD entry point must switch phase in, and restore on the way
+   out — running the card in mode 1 garbles CMD0 and it never answers (found on
+   hardware: correct wiring, silent card). */
+static void spi_cfg(uint32_t presc, uint32_t phase)
 {
   hspi1.Init.BaudRatePrescaler = presc;
+  hspi1.Init.CLKPhase = phase;
   (void)HAL_SPI_Init(&hspi1);
 }
+static void sd_bus_acquire(uint32_t presc) { spi_cfg(presc, SPI_PHASE_1EDGE); }
+static void sd_bus_release(void)           { spi_cfg(SD_DATA_PRESCALER, SPI_PHASE_2EDGE); }
+static void spi_set_prescaler(uint32_t presc) { sd_bus_acquire(presc); }
 
 static uint8_t xfer(uint8_t out)
 {
@@ -185,16 +196,62 @@ int sd_spi_probe(sd_info_t *info)
 done:
   cs_high();
   (void)xfer(0xFFu);                       /* release MISO                     */
-  spi_set_prescaler(SD_DATA_PRESCALER);    /* the MAX31865's bus, exactly as before */
+  sd_bus_release();                        /* MAX31865 bus: mode 1, 2 MHz     */
 
   info->type = ok ? type : SD_TYPE_NONE;
   info->capacity_mb = cap_mb;
   return ok;
 }
 
+int sd_spi_diag(char *out, unsigned n)
+{
+  unsigned w = 0;
+
+  /* Net-level test first: PA6 (MISO) as a plain input with the internal
+     pull-up. A free/driven-high net reads 1; a net shorted to ground reads 0
+     even against the pull-up — card protocol not involved at all. */
+  {
+    GPIO_InitTypeDef g = {0};
+    g.Pin = GPIO_PIN_6; g.Mode = GPIO_MODE_INPUT; g.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(GPIOA, &g);
+    HAL_Delay(2);
+    w += snprintf(out + w, n - w, "MISO idle w/pull-up: %s | ",
+                  HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_6) ? "HIGH (net free)"
+                                                      : "LOW (NET GROUNDED!)");
+    g.Mode = GPIO_MODE_AF_PP; g.Pull = GPIO_NOPULL;
+    g.Speed = GPIO_SPEED_FREQ_HIGH; g.Alternate = GPIO_AF5_SPI1;
+    HAL_GPIO_Init(GPIOA, &g);                     /* back to SPI duty */
+  }
+
+  cs_init();
+
+  /* Functional CS test: hold the pin LOW for 8 s so a meter can verify the
+     level AT THE CARD PAD — a beep test passes through a cold joint that this
+     won't. IWDG is fed through the wait. */
+  cs_low();
+  for (int s = 0; s < 8; ++s) { IWDG->KR = 0x0000AAAAu; HAL_Delay(1000); }
+  cs_high();
+
+  sd_bus_acquire(SPI_BAUDRATEPRESCALER_128);     /* 125 kHz — extra margin */
+  cs_high();
+  for (int i = 0; i < 25; ++i) (void)xfer(0xFFu); /* 200 warm-up clocks     */
+  cs_low();
+  w += snprintf(out + w, n - w, "SD DIAG (125 kHz, mode 0) CMD0 R1 x8:");
+  for (int a = 0; a < 8 && w + 6 < n; ++a) {
+    uint8_t r = sd_cmd(0, 0u, 0x95u);
+    w += snprintf(out + w, n - w, " %02X", r);
+    if (r == 0x01u) break;
+  }
+  cs_high(); (void)xfer(0xFFu);
+  sd_bus_release();
+  snprintf(out + w, n - w, "\r\n  (01=card OK; FF=no answer at all; anything else=marginal wiring)");
+  return 0;
+}
+
 int sd_spi_read_block(uint32_t lba, uint8_t buf[SD_BLOCK_SIZE])
 {
   if (!s_ready || buf == NULL) return 0;
+  sd_bus_acquire(SD_DATA_PRESCALER);
   const uint32_t addr = s_sdhc ? lba : (lba * SD_BLOCK_SIZE);
   int ok = 0;
 
@@ -206,12 +263,14 @@ int sd_spi_read_block(uint32_t lba, uint8_t buf[SD_BLOCK_SIZE])
   }
   cs_high();
   (void)xfer(0xFFu);
+  sd_bus_release();
   return ok;
 }
 
 int sd_spi_write_block(uint32_t lba, const uint8_t buf[SD_BLOCK_SIZE])
 {
   if (!s_ready || buf == NULL) return 0;
+  sd_bus_acquire(SD_DATA_PRESCALER);
   const uint32_t addr = s_sdhc ? lba : (lba * SD_BLOCK_SIZE);
   int ok = 0;
 
@@ -226,5 +285,6 @@ int sd_spi_write_block(uint32_t lba, const uint8_t buf[SD_BLOCK_SIZE])
   }
   cs_high();
   (void)xfer(0xFFu);
+  sd_bus_release();
   return ok;
 }

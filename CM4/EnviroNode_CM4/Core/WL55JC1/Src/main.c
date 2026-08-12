@@ -596,6 +596,20 @@ int main(void)
     /* Single silent call that samples INA/ADC, handles FULL detection, and updates coulomb counter */
     PowerStats_Tick();
 
+    /* B1 = console always-awake (sleep off), B2 = normal sleep schedule.
+       CM0+ owns the buttons and posts presses via the mailbox pi_pwr channel
+       (kept from KoreroNet precisely for this). */
+    {
+      static uint32_t last_btn_seq = 0u;
+      volatile KoreroMailbox_t *mbx = KORERO_MAILBOX;
+      if (mbx->magic == KORERO_MB_MAGIC && mbx->pi_pwr_seq != last_btn_seq) {
+        last_btn_seq = mbx->pi_pwr_seq;
+        envnode_power_set_enabled(mbx->pi_pwr_on ? 0 : 1);
+        UART1_Send(mbx->pi_pwr_on ? "BTN: B1 - sleep disabled, console always live\r\n"
+                                  : "BTN: B2 - normal sleep schedule restored\r\n");
+      }
+    }
+
     /* EnviroNode: apply any gateway commands, then sample + uplink on schedule */
     EnvNode_DrainDownlinks();
     EnvNode_ScheduleTick();
@@ -1039,9 +1053,13 @@ static void EnvNode_SampleAndPrint(void)
            (r.status & SENS_OK_AIR2) ? "ok" : "FAIL");
   UART1_Send(line);
 
-  snprintf(line, sizeof(line), "soil : moisture %u counts  temp %.2f C [%s]\r\n",
-           (unsigned)r.soil_moist_raw, r.soil_temp_c,
-           (r.status & SENS_OK_PT1000) ? "ok" : "RTD FAIL");
+  /* The 10HS is specified in mV (300 dry-air .. 1250 saturated, regulated
+     output) — print both so a reading can be checked against the datasheet. */
+  snprintf(line, sizeof(line), "soil : %u counts = %u mV [%s]  temp %.2f C [%s]\r\n",
+           (unsigned)r.soil_moist_raw,
+           (unsigned)(((uint32_t)r.soil_moist_raw * 3300u) / 4095u),
+           (r.status & SENS_OK_SOIL) ? "ok" : "FAIL",
+           r.soil_temp_c, (r.status & SENS_OK_PT1000) ? "ok" : "RTD FAIL");
   UART1_Send(line);
 
   /* The Decagon LWS is specified in millivolts, so print both: counts are what
@@ -2116,8 +2134,13 @@ static void Print_MessageSyntax(void)
     "nucleo log             (offline log status: records used / capacity)\r\n",
     "nucleo log dump [n]    (CSV of every logged reading, newest first)\r\n",
     "nucleo log erase       (wipe the offline log)\r\n",
-    "nucleo sd              (probe for an SD card; driver only, logging future)\r\n",
+    "nucleo sd              (probe + SD status; on failure prints the CMD0\r\n",
+    "                        R1 trace and MISO pull-up test automatically)\r\n",
+    "nucleo pinhunt [0-7]   (hold D pins low for a multimeter hunt)\r\n",
+    "nucleo cshunt          (input+pulldown scan: finds which D pin a\r\n",
+    "                        pulled-up wire actually lands on)\r\n",
     "nucleo sleep on|off    (STOP2 between cycles; off keeps the console live)\r\n",
+    "B1 button = sleep off (always awake)   B2 button = sleep on (normal)\r\n",
     "-- Sensor set: what to measure, how often (docs/CONFIG.md) --\r\n",
     "nucleo set {LW,T1,T2,SM,ST,WS,WD,R,15}   (replace the set + interval)\r\n",
     "{ALL,15} | {NONE}      (a bare brace line works too; ALL/NONE aliases)\r\n",
@@ -2250,7 +2273,7 @@ static void Console_HandleLine(const char *line_in) {
   if (strstr(cmd, "nucleosd")) {
     sd_info_t si;
     char lm[112];
-    UART1_Send("ACK: probing SPI1 for an SD card (CS = D2/PB12)...\r\n");
+    UART1_Send("ACK: probing SPI1 for an SD card (CS = D5/PB8)...\r\n");
     if (sd_spi_probe(&si)) {
       static const char *tname[] = { "none", "SD v1", "SD v2", "SDHC" };
       snprintf(lm, sizeof(lm), "SD: %s, %lu MB\r\n", tname[si.type], (unsigned long)si.capacity_mb);
@@ -2261,9 +2284,67 @@ static void Console_HandleLine(const char *line_in) {
       }
     } else {
       UART1_Send("SD: no card responded (no breakout, no card, or wiring - docs/LOGBOOK.md)\r\n");
+      { char dg[192]; sd_spi_diag(dg, sizeof(dg)); UART1_Send(dg); UART1_Send("\r\n"); }
     }
     envnode_sdlog_status(lm, sizeof(lm));
     UART1_Send(lm); UART1_Send("\r\n");
+    return;
+  }
+  /* Bring-up aid: hold each CN9 (D0..D7) pin LOW for 4 s in turn while the
+     operator watches a meter on a mystery wire — finds which hole a wire is
+     actually in. Restores all GPIO config afterwards. */
+  /* Find the CS wire electrically: its 12k pull-up to 3V3 is a beacon. Each
+     candidate becomes an input with the internal pull-DOWN (~40k); only a pin
+     genuinely attached to the externally pulled-up net reads HIGH
+     (12k up vs 40k down -> ~2.5 V). No meter required. D0/D1 excluded: the
+     UART drives them high and would false-positive. */
+  if (strstr(cmd, "nucleocshunt")) {
+    static const struct { GPIO_TypeDef *p; uint16_t pin; const char *name; } c[] = {
+      { GPIOB, GPIO_PIN_12, "D2 (PB12)" }, { GPIOB, GPIO_PIN_3,  "D3 (PB3) " },
+      { GPIOB, GPIO_PIN_5,  "D4 (PB5) " }, { GPIOB, GPIO_PIN_8,  "D5 (PB8) " },
+      { GPIOB, GPIO_PIN_10, "D6 (PB10)" }, { GPIOC, GPIO_PIN_1,  "D7 (PC1) " },
+    };
+    UART1_Send("CSHUNT: input+pulldown scan - HIGH = the pin with the 12k pull-up net:\r\n");
+    for (unsigned i = 0; i < sizeof(c)/sizeof(c[0]); ++i) {
+      GPIO_InitTypeDef g = {0};
+      g.Pin = c[i].pin; g.Mode = GPIO_MODE_INPUT; g.Pull = GPIO_PULLDOWN;
+      HAL_GPIO_Init(c[i].p, &g);
+      HAL_Delay(5);
+      char m[48];
+      snprintf(m, sizeof(m), "  %s : %s\r\n", c[i].name,
+               HAL_GPIO_ReadPin(c[i].p, c[i].pin) ? "HIGH  <-- CS wire is HERE" : "low");
+      UART1_Send(m);
+    }
+    MX_GPIO_Init();
+    UART1_Send("CSHUNT: done\r\n");
+    return;
+  }
+  if (strstr(cmd, "nucleopinhunt")) {
+    static const struct { GPIO_TypeDef *p; uint16_t pin; const char *name; } h[] = {
+      { GPIOB, GPIO_PIN_12, "D2  (PB12)" }, { GPIOB, GPIO_PIN_3,  "D3  (PB3)"  },
+      { GPIOB, GPIO_PIN_5,  "D4  (PB5)"  }, { GPIOB, GPIO_PIN_8,  "D5  (PB8)"  },
+      { GPIOB, GPIO_PIN_10, "D6  (PB10)" }, { GPIOC, GPIO_PIN_1,  "D7  (PC1)"  },
+      { GPIOB, GPIO_PIN_6,  "D1  (PB6)"  }, { GPIOB, GPIO_PIN_7,  "D0  (PB7)"  },
+    };
+    /* "nucleo pinhunt 5" holds ONLY D5, for 10 s — one yes/no per run, no
+       ambiguity about which window the meter dropped in. */
+    const char *dp = strstr(cmd, "nucleopinhunt") + strlen("nucleopinhunt");
+    int only = (*dp >= '0' && *dp <= '7') ? (*dp - '0') : -1;
+    UART1_Send(only >= 0 ? "PINHUNT: single pin, held LOW for 10 s:\r\n"
+                         : "PINHUNT: watch the meter - each pin held LOW for 4 s:\r\n");
+    for (unsigned i = 0; i < sizeof(h)/sizeof(h[0]); ++i) {
+      if (only >= 0 && h[i].name[1] != (char)('0' + only)) continue;
+      GPIO_InitTypeDef g = {0};
+      g.Pin = h[i].pin; g.Mode = GPIO_MODE_OUTPUT_PP; g.Speed = GPIO_SPEED_FREQ_LOW;
+      HAL_GPIO_WritePin(h[i].p, h[i].pin, GPIO_PIN_RESET);
+      HAL_GPIO_Init(h[i].p, &g);
+      char m[48]; snprintf(m, sizeof(m), "  HOLDING %s LOW...\r\n", h[i].name);
+      UART1_Send(m);
+      for (int s = 0; s < (only >= 0 ? 10 : 4); ++s) { IWDG->KR = 0x0000AAAAu; HAL_Delay(1000); }
+      HAL_GPIO_WritePin(h[i].p, h[i].pin, GPIO_PIN_SET);
+    }
+    UART1_Send("PINHUNT: done - restoring GPIO config\r\n");
+    MX_GPIO_Init();                     /* rain EXTI, VSENS, LED back to normal */
     return;
   }
   /* Offline sensor log. Ordering matters: "logdump"/"logerase" contain "log",

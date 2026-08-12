@@ -35,13 +35,47 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
 - **Calibration:** factory coefficients on-chip; no field cal needed. Sanity-check
   the two sensors agree within tolerance.
 
-## 3 · Soil moisture — analog probe (`analog_sensors.{h,c}`)
-- **Config key:** `SM`.
-- **Interface:** ADC channel. High output impedance → use a **long ADC sampling
-  time**.
-- **On-air:** raw 12-bit counts (curve applied off-node or via `set_cal`).
-- **Calibration:** two-point (air-dry vs saturated / in-water) → map counts to
-  %VWC per probe type.
+## 3 · Soil moisture — **Decagon 10HS** (`analog_sensors.{h,c}`)
+- **Config key:** `SM`. **Pin:** ADC_IN4 — PB2, Arduino **A1** (the Grove **A0
+  socket's second signal pin** — one socket carries A0+A1, so the LWS and the
+  10HS share a socket; their power comes from the switched rail, not the socket).
+- **Sensor:** Decagon Devices **10HS** — 10 cm capacitance/FDR probe running at
+  **70 MHz**; measures the bulk dielectric of ~1 L of soil. Sold in irrigation
+  channels as the Solem **"EC-10 HS"**; same hardware, Decagon manual applies
+  [R13]. In the default sensor set alongside `T1,T2,LW`.
+- **Power: 3 VDC @ 12 mA to 15 VDC @ 15 mA** [R13]. 3.3 V is inside the window
+  but **only just above the 3.0 V floor** — and 12 mA is far beyond what a GPIO
+  can source without sagging below that floor. **Power it from the switched
+  high-side rail or 3V3 direct — never from a bare GPIO pin** (the LWS at ~4 mA
+  already ruled that out; the 10HS at 12 mA is three times worse).
+- **Output: 300–1250 mV, independent of excitation** [R13]. Unlike the LWS the
+  10HS has an **onboard voltage regulator**, so its output is **not
+  ratiometric**: a millivolt reading is meaningful on its own and Decagon's
+  published calibration applies directly, whatever the excitation. At 12-bit /
+  Vref 3.3 V that is ≈ **372 counts (dry air) to ≈ 1551 counts (saturation)**;
+  the console prints counts **and** mV.
+- **Measurement time: 10 ms** — the driver's shared `ANALOG_RAIL_SETTLE_MS`
+  (15 ms) covers it, same pulsed-excitation discipline as the LWS.
+- **Wiring** (3-wire pigtail, Decagon convention — same as the older LWS):
+
+  | Function | Wire | Goes to |
+  |---|---|---|
+  | Excitation | **white** | switched 3V3 rail (12 mA!) |
+  | Analog output | **red** | **A1** (PB2) |
+  | Ground | bare/clear | GND |
+
+- **On-air:** raw 12-bit counts, u16 at offset 14 — the curve is applied
+  off-node so it can be refined without touching deployed firmware.
+- **Calibration:** Decagon's standard **mineral-soil** polynomial [R13]
+  (θ in m³/m³, x = sensor output in mV):
+  `θ = 2.97e-9·x³ − 7.37e-6·x² + 6.69e-3·x − 1.92`
+  Accuracy ±0.03 m³/m³ with the standard equation (typical mineral soils,
+  EC < 10 dS/m), ±0.02 with a soil-specific calibration; range 0 to
+  saturation (~0.57 m³/m³). High-EC or high-organic soils want their own
+  two-point check (air-dry vs saturated sample of the actual soil).
+- **Deployment:** prongs fully buried in undisturbed soil, no air gaps
+  (auger a pilot slot and press the prongs into the face); keep ≥ 8 cm from
+  large metal; the 5 m cable is attached.
 
 ## 4 · Leaf wetness — **Decagon LWS** (`analog_sensors.{h,c}`)
 - **Config key:** `LW`. **Pin:** ADC_IN5 — PB1, Arduino **A0** (Grove A0 socket).
@@ -122,6 +156,10 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
   electrical zero to true/magnetic north.
 
 ## 7 · Soil temperature — PT1000 via MAX31865 (`max31865.{h,c}`)
+> **⚠️ Dropped from this node (2026-08-13).** No MAX31865 board is fitted and
+> none is planned; SPI1 belongs to the SD card. The driver stays compiled (the
+> `ST` key remains valid in the config-string SPEC and simply raises its fault
+> path if selected), and this section is kept for a future node that fits one.
 - **Config key:** `ST`.
 - **Interface:** **SPI1** (`hspi1`) + a CS GPIO; optional DRDY on EXTI.
 - **Critical:** **Rref = 4.02 kΩ** for PT1000 (`MAX31865_RREF`), not 430 Ω. Set
@@ -196,7 +234,7 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
 |---|---|---|---|---|
 | `T1` | Air A temp/RH/press | `bme280` (**I²C2**, shield) | `air1_temp_c` / `air1_rh_pct` / `air1_press_hpa` | 4 / 6 / 7 |
 | `T2` | Air B temp/RH/press | `bme280` (**I²C1**, board pins) | `air2_temp_c` / `air2_rh_pct` / `air2_press_hpa` | 9 / 11 / 12 |
-| `SM` | Soil moisture | `analog_sensors` | `soil_moist_raw` | 14 |
+| `SM` | Soil moisture (10HS) | `analog_sensors` | `soil_moist_raw` | 14 |
 | `LW` | Leaf wetness | `analog_sensors` | `leaf_wet_raw` | 16 |
 | `ST` | Soil temperature | `max31865` | `soil_temp_c` | 18 |
 | `WS` | Wind speed / gust | `pulse_counter` | `wind_speed_ms` / `wind_gust_ms` | 20 / 24 |

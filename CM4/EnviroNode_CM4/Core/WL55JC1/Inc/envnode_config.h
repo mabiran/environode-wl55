@@ -41,12 +41,12 @@ extern "C" {
 /** @} */
 
 /** Default selection: measure everything (SENSOR_* bits, envnode_sensorset.h). */
-/* Default = the sensors actually fitted to the first node: the two BME280s plus
-   the Decagon LWS leaf-wetness sensor on A0. A default of SENSOR_ALL would raise
-   a fault bit for every probe that is not wired yet, which makes the fault bit
-   meaningless. Widen it with `{ALL,15}` as the rest of the harness is built
-   (docs/CONFIG.md). */
-#define ENVCFG_SENSOR_MASK_DEFAULT   (SENSOR_T1 | SENSOR_T2 | SENSOR_LW)
+/* Default = the sensors actually fitted to the first node: the two BME280s,
+   the Decagon LWS leaf-wetness sensor on A0 and the Decagon 10HS soil-moisture
+   probe on A1. A default of SENSOR_ALL would raise a fault bit for every probe
+   that is not wired yet, which makes the fault bit meaningless. Widen it with
+   `{ALL,15}` as the rest of the harness is built (docs/CONFIG.md). */
+#define ENVCFG_SENSOR_MASK_DEFAULT   (SENSOR_T1 | SENSOR_T2 | SENSOR_LW | SENSOR_SM)
 
 /** @brief Load config from flash, or apply defaults when nothing is stored. */
 void envnode_config_init(void);
