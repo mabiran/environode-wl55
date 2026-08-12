@@ -1425,6 +1425,12 @@ measurement time and pulsed-excitation discipline are the same as the LWS's.
   both A0 and A1 signal pins).
 - Expected reading: ≈ 372 counts in dry air up to ≈ 1551 counts at saturation
   (12-bit, Vref 3.3 V).
+- Every figure above (wire colours, 12 mA, 300–1250 mV, 10 ms, polynomial) was
+  verified verbatim against the manual text [R13] the same day — the wire
+  colours straight from its CR10X listing: *"white – excitation, red – Vout,
+  bare – gnd"*. Also from the spec block: **operating range 0–50 °C** — the
+  10HS is not rated to measure frozen soil; discard sub-zero-soil rows
+  off-node.
 
 ### 2026-08-13 — SD card brought up the hard way; CS lives on D5 (r18)
 
@@ -1929,7 +1935,7 @@ If you built a node before this date, LW and SM are swapped relative to yours.
 | R10 | The Things Network documentation | Device registration, payload formatters, downlink queueing |
 | R11 | **METER PHYTOS 31 manual** (20434) + legacy **Decagon LWS** Operator's Manuals (2007 v2, Feb 2016) + Campbell Scientific LWS manual | Leaf-wetness sensor: 2.5–5.0 V excitation, 10–50 % ratiometric output, 445 counts dry, pulsed-excitation requirement, wire colours |
 | R12 | **Davis Instruments DS7911 Rev G** — *7911 Anemometer* spec sheet. Local copy: `Anemometer 7911_SS.pdf` | Wind speed `V = P(2.25/T)`, 1600 rev/hr = 1 mph, 20 kΩ direction pot, wire colours, cable limits |
-| R13 | **Decagon 10HS Operator's Manual** (10HS soil moisture sensor; the probe Solem sells as "EC-10 HS") | Soil moisture: 3 VDC @ 12 mA–15 VDC @ 15 mA, 300–1250 mV regulated output, 10 ms measurement time, mineral-soil calibration polynomial, wire colours |
+| R13 | **Decagon 10HS Operator's Manual** (10HS soil moisture sensor; the probe Solem sells as "EC-10 HS"). Local copy: `10HS_Manual.pdf` | Soil moisture: 3 VDC @ 12 mA–15 VDC @ 15 mA, 300–1250 mV regulated output, 10 ms measurement time, 0–50 °C operating, mineral-soil calibration polynomial, wire colours (its CR10X listing states them outright: *"white – excitation, red – Vout, bare – gnd"*) |
 
 **Open items** are tracked in [ROADMAP.md](ROADMAP.md). The largest at r19:
 the intermittent BME280 I²C contact, TTN join against a real gateway, the

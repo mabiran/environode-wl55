@@ -76,6 +76,9 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
 - **Deployment:** prongs fully buried in undisturbed soil, no air gaps
   (auger a pilot slot and press the prongs into the face); keep ≥ 8 cm from
   large metal; the 5 m cable is attached.
+- **Operating temperature: 0 to 50 °C** (survival −40 to 50 °C) [R13] — the
+  sensor is not rated to *measure* below freezing, so sub-zero soil readings
+  from a frost-prone site should be discarded off-node, not trusted.
 
 ## 4 · Leaf wetness — **Decagon LWS** (`analog_sensors.{h,c}`)
 - **Config key:** `LW`. **Pin:** ADC_IN5 — PB1, Arduino **A0** (Grove A0 socket).
