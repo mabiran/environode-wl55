@@ -3,13 +3,13 @@
   * @file    envnode_log.h
   * @brief   Offline sensor log — every measurement, timestamped, in flash.
   *
-  *          A flash ring in pages 55–61 (14 KB, reserved by the linker) records
+  *          A flash ring in pages 59–61 (6 KB, reserved by the linker) records
   *          the exact 30-byte frame each cycle produced, stamped with the RTC.
   *          It fills oldest-first and, when full, erases the oldest page and
   *          keeps going — the node never stops logging, it forgets the oldest
   *          ~14 % instead.
   *
-  *          Capacity: 40-byte records, 51 per page, 7 pages = **357 records**.
+  *          Capacity: 40-byte records, 51 per page, 3 pages = **153 records** (shrunk from 7 pages when FatFs took the flash — the SD card is the archive).
   *          At the 15-minute field interval that is ~3.7 days of history; at the
   *          1-minute bench interval, ~6 hours.
   *
@@ -37,7 +37,7 @@ extern "C" {
 #include <stddef.h>
 
 #define ENVLOG_FRAME_LEN   (30u)   /*!< the FPort-1 frame, verbatim            */
-#define ENVLOG_CAPACITY    (357u)  /*!< records before the oldest page recycles */
+#define ENVLOG_CAPACITY    (153u)  /*!< 3 pages × 51 — the SD card is the archive now */
 
 /**
  * @brief  Scan the ring and position the write head. Call once at boot.

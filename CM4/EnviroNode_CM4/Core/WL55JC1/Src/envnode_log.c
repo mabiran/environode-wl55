@@ -24,13 +24,13 @@
 #include "envnode_log.h"
 #include "stm32wlxx_hal.h"
 
-#define LOG_ADDR        (0x0801B800UL)          /* page 55                     */
-#define LOG_FIRST_PAGE  (55u)
-#define LOG_PAGES       (7u)
+#define LOG_ADDR        (0x0801D800UL)          /* page 59 — shrunk from 7 to 3 pages when FatFs took the flash (LOGBOOK §12A) */
+#define LOG_FIRST_PAGE  (59u)
+#define LOG_PAGES       (3u)
 #define PAGE_SIZE       (2048u)
 #define REC_SIZE        (40u)
 #define RECS_PER_PAGE   (PAGE_SIZE / REC_SIZE)  /* 51 (8 B/page wasted)        */
-#define REC_TOTAL       (LOG_PAGES * RECS_PER_PAGE)   /* 357                   */
+#define REC_TOTAL       (LOG_PAGES * RECS_PER_PAGE)   /* 153                   */
 
 typedef struct __attribute__((aligned(8))) {
   uint32_t epoch;

@@ -14,14 +14,17 @@ target_link_options(${BUILD_UNIT_0_NAME} PRIVATE ${CUBE_CMAKE_EXE_LINKER_FLAGS})
 # Add sources to executable/library
 target_sources(${BUILD_UNIT_0_NAME} PRIVATE
     "Common/System/system_stm32wlxx.c"
+    "Middlewares/FatFs/ff.c"
     "Core/WL55JC1/Src/adc.c"
     "Core/WL55JC1/Src/battery_adc.c"
     "Core/WL55JC1/Src/battery_flow.c"
     "Core/WL55JC1/Src/envnode_config.c"
     "Core/WL55JC1/Src/envnode_identity.c"
     "Core/WL55JC1/Src/envnode_keystore.c"
+    "Core/WL55JC1/Src/envnode_diskio.c"
     "Core/WL55JC1/Src/envnode_log.c"
     "Core/WL55JC1/Src/envnode_power.c"
+    "Core/WL55JC1/Src/envnode_sdlog.c"
     "Core/WL55JC1/Src/envnode_sensorset.c"
     "Core/WL55JC1/Src/gpio.c"
     "Core/WL55JC1/Src/i2c.c"
@@ -70,6 +73,7 @@ target_sources(${BUILD_UNIT_0_NAME} PRIVATE
 
 target_include_directories(${BUILD_UNIT_0_NAME} PRIVATE
     "Core/WL55JC1/Inc"
+    "Middlewares/FatFs"
     "Drivers/STM32WLxx_HAL_Driver/Inc"
     "Drivers/STM32WLxx_HAL_Driver/Inc/Legacy"
     "Drivers/BSP/STM32WLxx_Nucleo"

@@ -59,8 +59,8 @@ MEMORY
 {
   RAM    (xrw)   : ORIGIN = 0x20000000, LENGTH = 32K - 0x200
   NOINIT (xrw)   : ORIGIN = 0x20007E00, LENGTH = 0x200
-  FLASH   (rx)   : ORIGIN = 0x08000000, LENGTH = 110K
-  LOGSTORE (r)   : ORIGIN = 0x0801B800, LENGTH = 14K   /* pages 55-61: sensor log ring */
+  FLASH   (rx)   : ORIGIN = 0x08000000, LENGTH = 118K
+  LOGSTORE (r)   : ORIGIN = 0x0801D800, LENGTH = 6K    /* pages 59-61: sensor log ring */
   ENVCFG  (r)    : ORIGIN = 0x0801F000, LENGTH = 2K
   KEYSTORE (r)   : ORIGIN = 0x0801F800, LENGTH = 2K
 }

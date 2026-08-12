@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r16 — 2026-08-04 |
+| **Revision** | r17 — 2026-08-04 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -654,7 +654,7 @@ configuration through a power cut, and through a firmware re-flash.
 
 | Page | Address | Contents | Written when |
 |---|---|---|---|
-| 55–61 | `0x0801B800` | **offline sensor log** — 357 timestamped frames, ring | every measurement cycle |
+| 59–61 | `0x0801D800` | **offline sensor log** — 153 timestamped frames, ring (was 55–61/357 before FatFs) | every measurement cycle |
 | 62 | `0x0801F000` | sensor set, interval, calibration offsets, vane offset | an accepted config change |
 | 63 | `0x0801F800` | AppKey, DevEUI, JoinEUI *(node id planned — [§14](#14-build-log))* | provisioning only |
 
@@ -1080,9 +1080,9 @@ Set these to the parts actually fitted, then re-run the affected test.
 
 ## 12A. Future functionality — SD-card mass logging
 
-> **Status: driver programmed and compiled, service layer not built.** `nucleo sd`
-> probes for a card today; nothing writes to one yet. The offline flash ring
-> ([§7](#7-non-volatile-memory-map)) is the live store.
+> **Status: IMPLEMENTED 2026-08-04 (r17)** — FatFs mounted, daily CSV files,
+> CONFIG.INI provisioning. This section stays as the design record; the flash
+> ring ([§7](#7-non-volatile-memory-map)) is now the 153-record fallback.
 
 **Goal.** Replace the 14 KB / 357-record flash ring with months of removable
 history: daily `YYYYMMDD.CSV` files (same columns as `nucleo log dump`) on a
@@ -1385,6 +1385,46 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-04 — SD CSV logging + CONFIG.INI provisioning implemented (r17)
+
+The §12A plan executed in full:
+
+- **FatFs R0.12c** vendored from the same Cube package as the HAL; minimal
+  write profile (8.3 names, `_FS_TINY`, `_FS_MINIMIZE 2`), compiled **-Os**
+  (at the Debug profile's -O0 it blew the budget to 1.2 KB headroom; -Os on
+  `ff.c` alone restores ~5 KB). `envnode_diskio.c` maps FatFs's five calls
+  straight onto `sd_spi.c`; real `get_fattime()` from the RTC so files carry
+  true timestamps.
+- **Flash ring shrunk 7→3 pages** (357→**153** records, pages **59–61**,
+  `FLASH` 110K→**118K**) exactly as §12A planned — the card is the archive,
+  the ring is the card-failed fallback.
+- **Per-reading CSV append** (`envnode_sdlog.c`): same row the console dump
+  prints (one shared formatter — the two can never disagree), daily
+  `YYYYMMDD.CSV` rotation, header once per file, **f_sync per row** so a power
+  cut costs at most one row. A failed write disables SD logging loudly; the
+  flash ring continues regardless.
+- **`CONFIG.INI` field provisioning**: `appkey=` (32 hex, required),
+  `deveui=`/`joineui=` (16 hex, optional), `;`/`#` comments. Found at boot (or
+  on `nucleo sd` hot-insert) it **outranks every stored identity**, is applied
+  to the radio, and persists to backup regs + flash — but only when it differs
+  from the stored keys, so a card left inserted costs zero page erases.
+  ⚠️ The AppKey sits in plaintext on removable media — acceptable here; remove
+  the file after provisioning if that changes.
+- **Simulated to the extent honesty allows without the board**: build green
+  both cores; the CONFIG.INI parser is a pure function exercised by
+  `nucleo selftest` (accept vector + 3 reject vectors: bad hex, short key,
+  trailing junk); the CSV path reuses the already-verified dump formatter; the
+  FatFs option set was desk-checked (`FA_OPEN_APPEND` needs `f_lseek`, present
+  at `_FS_MINIMIZE 2`). **The mount/write path itself cannot run until the
+  board and an SD breakout exist** — first hardware action: `nucleo selftest`,
+  then `nucleo sd` with a FAT32 card carrying a CONFIG.INI.
+- Identity chain is now four deep: **SD CONFIG.INI → backup registers → flash
+  → compiled-in placeholder** (ARCHITECTURE.md §3 updated).
+
+**Replicator impact:** wire per §12A (3.3 V breakout, CS D2, pull-up, caps).
+Prepare cards with a `CONFIG.INI` to provision nodes without a console. Note
+the ring's smaller 153-record capacity when planning visit intervals.
 
 ### 2026-08-04 — Full-corpus staleness sweep (r16)
 

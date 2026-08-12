@@ -64,6 +64,9 @@ provisions over the mailbox and forces a re-join. Treat that banner as noise;
 **CM4 identity chain**, tried in order at boot (step 9):
 
 ```
+ 0. SD card CONFIG.INI    (highest)    applied + persisted when present —
+        │ miss                          field provisioning by prepared card
+        ▼
  1. RTC backup registers  DR9–DR18     survives reset; power loss only with VBAT
         │ miss                          (coin cell, SB21 removed — LOGBOOK §7.2)
         ▼

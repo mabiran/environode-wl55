@@ -38,6 +38,13 @@ target_sources(${BUILD_UNIT_0_NAME} PRIVATE
   # User defined sources
 )
 
+# FatFs is a vendored third-party library we never step through in a debugger,
+# and at the Debug profile's -O0 it costs ~15 KB against a ~13 KB budget.
+# Building just this file size-optimised keeps the image comfortably inside
+# FLASH (118K) while the application keeps full debug fidelity.
+set_source_files_properties("Middlewares/FatFs/ff.c"
+  PROPERTIES COMPILE_OPTIONS "-Os")
+
 # Add include directories
 target_include_directories(${BUILD_UNIT_0_NAME} PRIVATE
   # User defined include directories

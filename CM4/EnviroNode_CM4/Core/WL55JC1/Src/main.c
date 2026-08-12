@@ -76,7 +76,8 @@
 #include "envnode_power.h"             /* STOP2 sleep between measurement cycles */
 #include "envnode_identity.h"          /* compiled-in fallback OTAA identity     */
 #include "envnode_log.h"               /* offline sensor log (flash ring)        */
-#include "sd_spi.h"                    /* SD driver — programmed, not in service */
+#include "sd_spi.h"                    /* SD low-level driver                    */
+#include "envnode_sdlog.h"             /* SD CSV logging + CONFIG.INI creds      */
 #include "sensors/envnode_sensors.h"
 #include "sensors/envnode_payload.h"
 #include "sensors/analog_sensors.h"
@@ -195,6 +196,16 @@ static uint32_t uart2_len = 0;
 /* Defer command handling to main loop (ISR just sets this) */
 static volatile uint8_t cmd_ready = 0;
 static char             cmd_buf[128];
+
+/* Credentials found in CONFIG.INI on the SD card at boot (all-zero if none). */
+static sdlog_creds_t g_sd_creds;
+
+/* One CSV header + row formatter, shared by the console dump and the SD file so
+   the two can never disagree about the format. */
+static const char ENVNODE_CSV_HEADER[] =
+    "timestamp,epoch2000,status,batt_V,air1_C,air1_RH,air1_hPa,"
+    "air2_C,air2_RH,air2_hPa,soil_raw,leaf_raw,soil_C,"
+    "wind_ms,wind_dir,gust_ms,rain_tips,rain_mm\r\n";
 
 /* Measurement scheduler state. File scope rather than function statics because
    the sleep tick has to see the same deadline the scheduler is working to. */
@@ -319,6 +330,9 @@ static void EnvNode_ScheduleTick(void);    /* periodic sample + uplink          
 static void EnvNode_SleepTick(void);       /* STOP2 between cycles when safe    */
 static void EnvNode_SelfTest(void);        /* `nucleo selftest` — pre-flight     */
 static void EnvNode_LogDump(uint32_t max_rows); /* `nucleo log dump` CSV         */
+static void EnvNode_FormatCsvRow(uint32_t ep, const uint8_t *f, char *line, size_t sz);
+static void EnvNode_ApplySdCreds(const sdlog_creds_t *c);  /* CONFIG.INI keys   */
+uint32_t    EnvNode_EpochNow(void);              /* RTC epoch for envnode_sdlog  */
 static void EnvNode_DrainDownlinks(void);  /* config string + FPort-10 commands */
 static void EnvNode_ApplyConfigString(const char *text, size_t len);
 static void EnvNode_PrintPowerVerdict(const char *prefix);
@@ -454,10 +468,17 @@ int main(void)
     envnode_power_init();                      /* RTC wake-up for STOP2 sleep  */
     {
       uint32_t nrec = envnode_log_init();      /* offline sensor log (flash)   */
-      char lm[72];
+      char lm[96];
       snprintf(lm, sizeof(lm), "LOG   : %lu of %u records (\"nucleo log dump\" for CSV)\r\n",
                (unsigned long)nrec, (unsigned)ENVLOG_CAPACITY);
       UART1_Send(lm);
+
+      /* SD card: mount + CONFIG.INI. No card / no reader degrades cleanly to
+         the flash ring. Credentials found here outrank every stored identity —
+         they are applied in the key-restore block below, after CM0+ is up. */
+      (void)envnode_sdlog_init(&g_sd_creds);
+      envnode_sdlog_status(lm, sizeof(lm));
+      UART1_Send(lm); UART1_Send("\r\n");
     }
     env_status_t src = envnode_sensors_init();
     analog_set_winddir_offset((float)envnode_config_get_winddir_offset_deg10() / 10.0f);
@@ -492,6 +513,12 @@ int main(void)
 
   /* Restore any LoRaWAN keys persisted in backup registers and push them to the
      radio core, so the node re-joins on its own after a reset/power-cycle. */
+  /* Highest priority: credentials from CONFIG.INI on the SD card — inserting a
+     prepared card IS the provisioning act, no console needed. Applied and then
+     persisted (backup regs + flash) so the card can be removed afterwards. */
+  if (g_sd_creds.has_appkey) {
+    EnvNode_ApplySdCreds(&g_sd_creds);
+  } else
 #if defined(HAL_RTC_MODULE_ENABLED) && LK_HAVE_PERSIST
   if (Persist_LoadLoraKeys()) {
     UART1_Send("BOOT: restored LoRaWAN keys from backup; radio (re)joining\r\n");
@@ -1068,8 +1095,19 @@ static int EnvNode_UplinkNow(void)
      (every 51st record): the radio is idle here, so the ~20-40 ms stall cannot
      land inside an RX window. */
 #if defined(HAL_RTC_MODULE_ENABLED)
-  if (!envnode_log_append(rtc_now_epoch2000(), frame)) {
-    UART1_Send("WARN: offline log write failed\r\n");
+  {
+    const uint32_t ep = rtc_now_epoch2000();
+    if (!envnode_log_append(ep, frame)) {
+      UART1_Send("WARN: offline log write failed\r\n");
+    }
+    /* Same reading, same format, onto the SD card when one is mounted. */
+    if (envnode_sdlog_active()) {
+      char row[192];
+      EnvNode_FormatCsvRow(ep, frame, row, sizeof(row));
+      if (!envnode_sdlog_append(ep, ENVNODE_CSV_HEADER, row)) {
+        UART1_Send("WARN: SD write failed - SD logging disabled (flash ring continues)\r\n");
+      }
+    }
   }
 #endif
 
@@ -1249,25 +1287,49 @@ static void EnvNode_ScheduleTick(void)
   * the single place log bytes become engineering units. A field whose OK-bit was
   * clear (sentinel on air) prints as an empty CSV cell, not a fake zero.
   */
-static void EnvNode_LogDump(uint32_t max_rows)
+/**
+  * @brief  Apply CONFIG.INI credentials: mailbox → radio joins; persist only if
+  *         they differ from the flash keystore (a card left inserted must not
+  *         cost a page erase per boot).
+  */
+static void EnvNode_ApplySdCreds(const sdlog_creds_t *c)
 {
-  const uint32_t total = envnode_log_count();
-  uint32_t rows = (max_rows == 0u || max_rows > total) ? total : max_rows;
-  char line[192];
+  volatile KoreroMailbox_t *mb = KORERO_MAILBOX;
+  uint8_t f_app[16], f_dev[8], f_join[8];
+  int same = 0;
 
-  snprintf(line, sizeof(line), "LOG: %lu records stored, printing %lu (newest first)\r\n",
-           (unsigned long)total, (unsigned long)rows);
-  UART1_Send(line);
-  UART1_Send("timestamp,epoch2000,status,batt_V,air1_C,air1_RH,air1_hPa,"
-             "air2_C,air2_RH,air2_hPa,soil_raw,leaf_raw,soil_C,"
-             "wind_ms,wind_dir,gust_ms,rain_tips,rain_mm\r\n");
+  if (env_keystore_load(f_app, f_dev, f_join, NULL)) {
+    same = (memcmp(f_app, c->app_key, 16) == 0) &&
+           (!c->has_deveui  || memcmp(f_dev,  c->dev_eui,  8) == 0) &&
+           (!c->has_joineui || memcmp(f_join, c->join_eui, 8) == 0);
+  }
 
-  for (uint32_t i = 0; i < rows; ++i) {
-    uint32_t ep = 0;
-    uint8_t f[ENVLOG_FRAME_LEN];
-    if (!envnode_log_get(i, &ep, f)) break;
+  for (int i = 0; i < 8;  i++) mb->dev_eui[i]  = c->has_deveui  ? c->dev_eui[i]  : 0u;
+  for (int i = 0; i < 8;  i++) mb->join_eui[i] = c->has_joineui ? c->join_eui[i] : 0u;
+  for (int i = 0; i < 16; i++) mb->app_key[i]  = c->app_key[i];
+  __DMB();
+  mb->key_seq = mb->key_seq + 1u;          /* CM0+ applies + joins */
 
-    IWDG->KR = 0x0000AAAAu;      /* a full dump takes seconds on two UARTs */
+  if (same) {
+    UART1_Send("BOOT: CONFIG.INI keys match the stored identity; applied\r\n");
+  } else {
+    UART1_Send("BOOT: LoRaWAN keys taken from SD CONFIG.INI; persisting\r\n");
+    Persist_SaveLoraKeys();                /* backup regs + flash mirror */
+  }
+}
+
+/** RTC epoch for modules that cannot see the static helper (SD timestamps). */
+uint32_t EnvNode_EpochNow(void)
+{
+#if defined(HAL_RTC_MODULE_ENABLED)
+  return rtc_now_epoch2000();
+#else
+  return 0u;
+#endif
+}
+
+static void EnvNode_FormatCsvRow(uint32_t ep, const uint8_t *f, char *line, size_t sz)
+{
 
     /* epoch2000 -> civil date (Gregorian; same convention as make_epoch2000) */
     uint32_t days = ep / 86400u, rem = ep % 86400u;
@@ -1291,13 +1353,13 @@ static void EnvNode_LogDump(uint32_t max_rows)
     #define GS16(o) ((int16_t)G16(o))
     const uint8_t st = f[1];
 
-    int n = snprintf(line, sizeof(line),
+    int n = snprintf(line, sz,
                      "%04lu-%02lu-%02lu %02lu:%02lu:%02lu,%lu,0x%02X,%.3f,",
                      (unsigned long)y, (unsigned long)(mo + 1u), (unsigned long)(days + 1u),
                      (unsigned long)hh, (unsigned long)mi, (unsigned long)ss,
                      (unsigned long)ep, (unsigned)st, (double)G16(2) / 1000.0);
 
-    #define CAT(...) n += snprintf(line + n, sizeof(line) - (size_t)n, __VA_ARGS__)
+    #define CAT(...) n += snprintf(line + n, sz - (size_t)n, __VA_ARGS__)
     if (st & SENS_OK_AIR1) CAT("%.2f,%.1f,%.1f,", GS16(4) / 100.0, f[6] / 2.0, G16(7) / 10.0);
     else                   CAT(",,,");
     if (st & SENS_OK_AIR2) CAT("%.2f,%.1f,%.1f,", GS16(9) / 100.0, f[11] / 2.0, G16(12) / 10.0);
@@ -1313,7 +1375,25 @@ static void EnvNode_LogDump(uint32_t max_rows)
     #undef CAT
     #undef GS16
     #undef G16
+}
 
+static void EnvNode_LogDump(uint32_t max_rows)
+{
+  const uint32_t total = envnode_log_count();
+  uint32_t rows = (max_rows == 0u || max_rows > total) ? total : max_rows;
+  char line[192];
+
+  snprintf(line, sizeof(line), "LOG: %lu records stored, printing %lu (newest first)\r\n",
+           (unsigned long)total, (unsigned long)rows);
+  UART1_Send(line);
+  UART1_Send(ENVNODE_CSV_HEADER);
+
+  for (uint32_t i = 0; i < rows; ++i) {
+    uint32_t ep = 0;
+    uint8_t f[ENVLOG_FRAME_LEN];
+    if (!envnode_log_get(i, &ep, f)) break;
+    IWDG->KR = 0x0000AAAAu;      /* a full dump takes seconds on two UARTs */
+    EnvNode_FormatCsvRow(ep, f, line, sizeof(line));
     UART1_Send(line);
   }
   UART1_Send("LOG: end\r\n");
@@ -1493,6 +1573,33 @@ static void EnvNode_SelfTest(void)
     } else {
       fail++; UART1_Send("  [FAIL] live sensor read (see 'nucleo sensors' for detail)\r\n");
     }
+  }
+
+  /* --- 5. CONFIG.INI parser (pure function — no card needed) -------------- */
+  {
+    static const char good[] =
+      "; EnviroNode credentials\r\n"
+      "AppKey = 000102030405060708090A0B0C0D0E0F   ; comment\r\n"
+      "deveui=0080E115061BF803\r\n"
+      "# hash comment\r\n"
+      "JOINEUI = 0000000000000001\r\n";
+    static const char bad[] =
+      "appkey = 000102030405060708090A0B0C0D0E0G\r\n"   /* bad hex digit  */
+      "appkey = 00010203\r\n"                            /* too short      */
+      "deveui = 0080E115061BF803FF extra\r\n";           /* trailing junk  */
+    sdlog_creds_t c;
+    int ok = 1;
+
+    ok &= (envnode_ini_parse(good, sizeof(good) - 1u, &c) == 3);
+    ok &= c.has_appkey && c.has_deveui && c.has_joineui;
+    ok &= (c.app_key[0] == 0x00u && c.app_key[15] == 0x0Fu);
+    ok &= (c.dev_eui[0] == 0x00u && c.dev_eui[7] == 0x03u);
+    ok &= (c.join_eui[7] == 0x01u);
+    ok &= (envnode_ini_parse(bad, sizeof(bad) - 1u, &c) == 0);
+    ok &= !c.has_appkey;
+
+    if (ok) { pass++; UART1_Send("  [PASS] CONFIG.INI parser (accept + 3 reject vectors)\r\n"); }
+    else    { fail++; UART1_Send("  [FAIL] CONFIG.INI parser\r\n"); }
   }
 
   snprintf(line, sizeof(line), "---- selftest: %d passed, %d failed ----\r\n", pass, fail);
@@ -2142,16 +2249,21 @@ static void Console_HandleLine(const char *line_in) {
      CMD0 times out and reports "no card" in ~100 ms. */
   if (strstr(cmd, "nucleosd")) {
     sd_info_t si;
-    char lm[96];
+    char lm[112];
     UART1_Send("ACK: probing SPI1 for an SD card (CS = D2/PB12)...\r\n");
     if (sd_spi_probe(&si)) {
       static const char *tname[] = { "none", "SD v1", "SD v2", "SDHC" };
-      snprintf(lm, sizeof(lm), "SD: %s, %lu MB. Driver OK - file logging not yet enabled\r\n",
-               tname[si.type], (unsigned long)si.capacity_mb);
+      snprintf(lm, sizeof(lm), "SD: %s, %lu MB\r\n", tname[si.type], (unsigned long)si.capacity_mb);
+      UART1_Send(lm);
+      /* Hot insert: (re)mount, re-read CONFIG.INI, apply any credentials. */
+      if (envnode_sdlog_init(&g_sd_creds)) {
+        if (g_sd_creds.has_appkey) EnvNode_ApplySdCreds(&g_sd_creds);
+      }
     } else {
-      snprintf(lm, sizeof(lm), "SD: no card responded (no breakout, no card, or wiring - docs/LOGBOOK.md)\r\n");
+      UART1_Send("SD: no card responded (no breakout, no card, or wiring - docs/LOGBOOK.md)\r\n");
     }
-    UART1_Send(lm);
+    envnode_sdlog_status(lm, sizeof(lm));
+    UART1_Send(lm); UART1_Send("\r\n");
     return;
   }
   /* Offline sensor log. Ordering matters: "logdump"/"logerase" contain "log",

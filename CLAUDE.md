@@ -75,11 +75,12 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
 - [x] **STOP2 sleep implemented and hardware-verified** (`envnode_power.c`): RTC
       wake, 8 s IWDG-safe chunks, HAL tick advanced on wake. Only `R` blocks
       sleep — wind speed is ADC **burst-sampled** on A4/PB14, not edge-counted.
-- [x] Offline sensor log: flash ring pages 55–61, 357 timestamped frames,
-      `nucleo log dump` = CSV (`envnode_log.c`). The WL55 has **no USB** — the
+- [x] Offline sensor log: flash ring pages 59–61, 153 timestamped frames,
+      `nucleo log dump` = CSV. The WL55 has **no USB** — the
       MSD drive belongs to the ST-LINK; console CSV is the retrieval path.
-- [x] SD SPI driver programmed but dormant (`sd_spi.c`, CS D2/PB12,
-      `nucleo sd` probes); FAT layer is future work (LOGBOOK §12A).
+- [x] **SD-card CSV logging LIVE** (`envnode_sdlog.c` + FatFs R0.12c -Os): daily
+      `YYYYMMDD.CSV`, f_sync per row, and `CONFIG.INI` credentials that outrank
+      every stored identity (field provisioning by card). `nucleo sd` = status.
 - [ ] FPort-2 diagnostic uplink (`get_config` returns ENV_NOTIMPL until then; a
       downlinked `{?}` is answered on the console only).
 - [ ] Pending the board's return: verify offline log + SD probe on hardware;
@@ -87,10 +88,10 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
       seating / 3V3 selector).
 
 ## Non-volatile layout (CM4 flash, reserved in STM32WL55JCIX_FLASH.ld)
-`FLASH` is declared as **110K** so these pages are never used by code:
+`FLASH` is declared as **118K** so these pages are never used by code:
 | Page | Address | Contents | Module |
 |---|---|---|---|
-| 55–61 | `0x0801B800` | **offline sensor log** — 357 timestamped 30-byte frames, ring, oldest page recycles. `nucleo log dump` = CSV | `envnode_log.c` |
+| 59–61 | `0x0801D800` | **offline sensor log** — 153 timestamped 30-byte frames, ring (shrunk 7→3 pages for FatFs) | `envnode_log.c` |
 | 62 | `0x0801F000` | interval, calibration offsets, **sensor-set mask**, vane offset | `envnode_config.c` |
 | 63 | `0x0801F800` | AppKey / DevEUI / JoinEUI | `envnode_keystore.c` |
 The WL55 has **no USB peripheral** — the USB drive that appears when the board is
