@@ -42,7 +42,7 @@ What happens, in order, with the console line each step prints:
 | 3 | RTC status | `BOOT: BKP_DR0=… <date> <time>` |
 | 4 | Config from flash page 62 (or defaults) | `CONFIG: {LW,T1,T2,1}` |
 | 5 | Sleep subsystem: RTC wake-up IRQ armed | — |
-| 6 | Offline log: scan ring, find head | `LOG  : n of 357 records` |
+| 6 | Offline log: scan ring, find head | `LOG  : n of 153 records` + `SDLOG:` status |
 | 7 | Sensor drivers probed (absent ≠ fatal) | `SENSORS: partial (air1=y … ina219=n)` |
 | 8 | Mailbox zeroed, **then** CM0+ released | `BOOT: CM0+ (radio core) released` |
 | 9 | **Identity restore** (§3) → mailbox → CM0+ joins | `BOOT: restored LoRaWAN keys from …` |
@@ -117,7 +117,7 @@ Every pass (~50 ms pacing), in order:
      │  (VSENS rail: on → 15 ms settle → convert → off)
      │  (WS selected: 3 s ADC burst on the speed contact)
      ▼
- OFFLINE LOG append (flash ring, RTC-timestamped)   ← before radio, always
+ OFFLINE LOG append (flash ring) + SD CSV row       ← before radio, always
      ▼
  mailbox post, req_seq++  ──► CM0+ transmits FPort 1 ──► RX1/RX2 windows
      ▼                                                       │
@@ -170,7 +170,8 @@ Details and hazards: LOGBOOK [§6.4](LOGBOOK.md#64-sleep-and-power).
 |---|---|---|
 | Sensor set, interval, calibration, vane offset | flash page 62 | accepted config change (only if changed) |
 | OTAA identity | backup registers DR9–18 **and** flash page 63 | provisioning only |
-| Offline sensor log | flash pages 55–61, ring | every measurement |
+| Offline sensor log | flash pages 59–61, ring (153) | every measurement |
+| SD CSV log | `YYYYMMDD.CSV` on the card, f_sync per row | every measurement, when a card is mounted |
 | Event log (boots, reset causes) | `.noinit` RAM | warm-reset survivable only |
 | RTC time | RTC + VBAT domain | `nucleo time is …` |
 
