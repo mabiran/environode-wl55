@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r20 — 2026-08-13 |
+| **Revision** | r21 — 2026-08-13 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -803,6 +803,20 @@ command set is mirrored on USART1 (D0/D1).
 > The firmware's own `nucleo list message syntax` output is authoritative. If it
 > disagrees with this table, the table is stale — fix it per [§0.3](#03-how-this-document-is-maintained).
 
+**Live watch.** `watch.ps1` in the repo root polls `nucleo sensors` and prints
+one full reading every few seconds — the bench dashboard:
+
+```
+.\watch.ps1                  # COM4, one reading every 5 s, Ctrl+C stops
+.\watch.ps1 -IntervalSec 10  # slower; floor is 4 s (the 3 s wind burst)
+```
+
+It sends `nucleo sleep off` on start; if the node was mid-sleep and missed it,
+press **B1** and restart the script. Only one program can hold the COM port —
+close it before flashing or using another console. (PowerShell 5.1 reads
+unmarked scripts as ANSI, so `watch.ps1` is deliberately ASCII-only — an
+em-dash decodes into a curly quote and breaks string parsing.)
+
 ### 9.2 Sensor-set configuration string
 
 One ASCII string selects **what is measured** and **how often**, over a downlink
@@ -1398,6 +1412,22 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-13 — Rain live at 0.2 mm/tip; wind path verified; watch.ps1 (r21)
+
+- **Rain calibrated and counting**: `RAIN_MM_PER_TIP` 0.2794 → **0.2** (the
+  figure printed on the fitted gauge). The signal wire had been plugged into
+  **D7** instead of D3 — found in seconds with `nucleo cshunt` (the rain
+  line's 8.2 kΩ pull-up is its own beacon, exactly like the SD CS hunt in
+  r18). Moved to **D3 (CN9 pin 4)**; first tip read `0.20 mm`. The external
+  8.2 kΩ pull-up in parallel with the internal one is fine.
+- **Wind selected and healthy**: `{SM,ST,WS,WD,R,1}` — the vane reads a
+  rock-stable resting angle (~165°, i.e. driven, wired per PINOUT: one Grove
+  socket, A3 wiper + A4 contact + 47 kΩ pull-up) and the 3 s burst sampler
+  runs per read, reporting 0.00 m/s with the cups still. Spin/rotation test
+  pending.
+- **`watch.ps1`** added at the repo root — polls `nucleo sensors` for a live
+  console dashboard (see [§9.1](#91-console-reference)).
 
 ### 2026-08-13 — PT1000 back, as a one-resistor divider on A2; 10HS live-verified (r20)
 

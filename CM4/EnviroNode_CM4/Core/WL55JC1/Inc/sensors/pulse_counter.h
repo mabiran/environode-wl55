@@ -3,8 +3,9 @@
   * @file    pulse_counter.h
   * @brief   Debounced pulse counters: rain (tipping bucket) + wind speed.
   *
-  *          Both inputs are reed contacts to GND (PB3 = rain / D3, PB5 = wind /
-  *          D4) that bounce for milliseconds. The EXTI callbacks accumulate
+  *          Rain is a reed contact to GND on PB3 (D3, EXTI3) that bounces for
+  *          milliseconds; wind speed is no longer EXTI-counted (it is ADC
+  *          burst-sampled — analog_sensors.c). The EXTI callback accumulates
   *          debounced pulses between samples; pulse_read_and_reset() turns them
   *          into per-interval statistics and rearms:
   *            rain_mm  = rain_tips * RAIN_MM_PER_TIP
@@ -25,7 +26,8 @@ extern "C" {
 #include "sensors/envnode_sensors.h"
 
 /* Calibration — set to the specific gauges. */
-#define RAIN_MM_PER_TIP    (0.2794f)  /*!< common 0.011" tipping bucket.        */
+#define RAIN_MM_PER_TIP    (0.2f)     /*!< printed on the fitted bucket (metric
+                                           0.2 mm/tip; was 0.2794 = 0.011").   */
 
 /**
  * Davis 7911 anemometer (datasheet DS7911 Rev G).
