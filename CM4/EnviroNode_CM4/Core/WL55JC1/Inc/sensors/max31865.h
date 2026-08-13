@@ -67,6 +67,13 @@ env_status_t max31865_read_ohms(float *ohms);
 /** @brief  Read + clear the fault-status register (0 = no fault). */
 uint8_t max31865_read_fault(void);
 
+/**
+ * @brief  PT1000 resistance → °C (CVD above 0 °C, inverse polynomial below).
+ *         Pure math, no hardware — shared with the A2 divider reading in
+ *         analog_sensors.c. Rejects results outside −60…120 °C.
+ */
+env_status_t pt1000_ohms_to_celsius(float rt, float *t_c);
+
 #ifdef __cplusplus
 }
 #endif

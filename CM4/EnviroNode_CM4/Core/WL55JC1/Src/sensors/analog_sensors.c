@@ -12,6 +12,7 @@
   */
 #include "sensors/analog_sensors.h"
 #include "sensors/pulse_counter.h"   /* ANEMO_MS_PER_HZ, WIND_DEBOUNCE_MS */
+#include "sensors/max31865.h"        /* pt1000_ohms_to_celsius() — math only */
 #include "adc.h"
 
 static uint8_t s_ready;
@@ -180,4 +181,38 @@ void analog_set_winddir_offset(float deg)
 float analog_get_winddir_offset(void)
 {
   return s_winddir_offset_deg;
+}
+
+env_status_t analog_rtd_a2_celsius(float *t_c)
+{
+  if (!s_ready || t_c == NULL) return ENV_ERR;
+
+  /* A2 (PA10) normally belongs to I2C1 as SDA. Borrow it: analog mode has no
+     output driver, so the swap is glitch-free for the (idle, single-threaded)
+     bus, and the AF is restored below exactly as i2c.c configured it. */
+  GPIO_InitTypeDef g = {0};
+  g.Pin  = GPIO_PIN_10;
+  g.Mode = GPIO_MODE_ANALOG;
+  g.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(GPIOA, &g);
+
+  uint16_t raw = 0u;
+  HAL_StatusTypeDef hrc = ADC_ReadChannelAvg(ENVNODE_ADC_CH_SOILTEMP, ANALOG_OVERSAMPLES, &raw);
+
+  g.Mode      = GPIO_MODE_AF_OD;      /* hand the pin back to I2C1 (i2c.c)     */
+  g.Speed     = GPIO_SPEED_FREQ_LOW;
+  g.Alternate = GPIO_AF4_I2C1;
+  HAL_GPIO_Init(GPIOA, &g);
+
+  if (hrc != HAL_OK) return ENV_ERR;
+
+  /* Open probe: the series resistor pulls the pin to the rail. Short: to GND.
+     Both would divide by ~0 or produce nonsense — reject before the math. */
+  if (raw >= 4050u || raw <= 50u) return ENV_ERR;
+
+  /* Ratiometric: the divider's top rail is the ADC reference, so the rail
+     voltage cancels and only the series resistor's value matters. */
+  const float r_rtd = ANALOG_RTD_SERIES_OHMS * (float)raw / (float)(ADC_FULL_SCALE - (float)raw);
+
+  return pt1000_ohms_to_celsius(r_rtd, t_c);
 }

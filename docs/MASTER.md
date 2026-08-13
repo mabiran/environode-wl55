@@ -137,7 +137,7 @@ only a *failed* read raises the fault bit.
 | Air T/RH/P ×2 | 2 × Bosch BME280 | I²C2 (shield) + I²C1 (board pins) | both answer at 0x76/0x77 → **two buses**, not straps |
 | Leaf wetness | Decagon LWS (METER PHYTOS 31) | ADC, A0 | **dielectric**, not resistive; ratiometric output 10–50 % of excitation; wants *pulsed* excitation |
 | Soil moisture | analog probe | ADC, A1 | raw counts on air; curve applied off-node |
-| Soil temperature | PT1000 + MAX31865 | SPI1 | **dropped from this node (LOGBOOK r18)** — no board fitted, SPI1 serves the SD card; driver kept for a future node (R_ref 4.02 kΩ) |
+| Soil temperature | PT1000 + **~900 Ω divider** | ADC (A2/PA10) | ratiometric off the 3V3 reference, same CVD math; MAX31865 dropped (LOGBOOK r18), divider live-verified 19.5–20.4 °C (r20). A2 doubles as I²C1 SDA — `T2` unusable while fitted |
 | Wind speed | Davis 7911 contact | ADC, A4 (burst-sampled) | 1 Hz = 2.25 mph from the datasheet; see §7.3 |
 | Wind direction | Davis 7911 vane pot | ADC, A3 | 20 kΩ linear, 0 Ω = north; 1 MΩ dead-band pull-down |
 | Rainfall | tipping bucket | EXTI, D3 | edge-counted; the one sensor that forbids sleep |

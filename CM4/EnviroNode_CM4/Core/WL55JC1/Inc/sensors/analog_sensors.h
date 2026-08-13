@@ -55,6 +55,25 @@ extern "C" {
 #define BATT_DIVIDER_RATIO   (VBAT_DIVIDER_GAIN)  /*!< ~4.748 (56.06k / 14.711k)  */
 #define WINDDIR_DEG_MAX      (360.0f)
 
+/** @name PT1000 soil temperature — resistor divider on A2 (PA10 / ADC_IN6)
+ *
+ * Wiring: 3V3 —[series R]— A2 —[PT1000]— GND. Replaced the MAX31865 (dropped
+ * from this node, LOGBOOK r18). Because the divider's top rail *is* the ADC
+ * reference, the measurement is ratiometric: R_rtd = Rs·counts/(4095−counts),
+ * with no dependence on the actual rail voltage. Then the same Callendar–Van
+ * Dusen conversion the MAX31865 driver used (pt1000_ohms_to_celsius).
+ *
+ * ⚠️ A2 is also I²C1 SDA (BME280 #2). While the divider is fitted, `T2` is
+ * electrically unusable — the divider holds SDA at ~1.8 V. The pin is muxed to
+ * analog only for the conversion and handed back to I²C1 afterwards.
+ *
+ * Set ANALOG_RTD_SERIES_OHMS to the series resistor's *measured* value: each
+ * ohm of error is ~0.26 °C, so a 5 % tolerance part left uncorrected can be
+ * off by ~12 °C. Fine-trim with `set_cal` sensor_id 7 (docs/PAYLOAD.md).
+ * @{ */
+#define ANALOG_RTD_SERIES_OHMS  (900.0f)  /*!< measure yours with a DMM        */
+/** @} */
+
 /**
  * @brief  Prepare the analog block. The ADC itself is configured and calibrated
  *         by MX_ADC_Init(); this only resets the driver state.
@@ -94,6 +113,15 @@ env_status_t analog_wind_burst(float *speed_ms, float *gust_ms);
  */
 void  analog_set_winddir_offset(float deg);
 float analog_get_winddir_offset(void);
+
+/**
+ * @brief  Read the PT1000 through the A2 resistor divider (see the block
+ *         comment above). Muxes PA10 to analog, converts, restores I²C1 AF.
+ * @param[out] t_c  soil temperature °C
+ * @retval ENV_OK, or ENV_ERR when the probe is open (counts pinned at the
+ *         rail), shorted (counts near 0), or the result is outside −60…120 °C.
+ */
+env_status_t analog_rtd_a2_celsius(float *t_c);
 
 #ifdef __cplusplus
 }

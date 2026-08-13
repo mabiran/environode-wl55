@@ -158,20 +158,45 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
 - **Calibration:** `set_winddir_offset` (downlink 0x05) aligns the vane's
   electrical zero to true/magnetic north.
 
-## 7 · Soil temperature — PT1000 via MAX31865 (`max31865.{h,c}`)
-> **⚠️ Dropped from this node (2026-08-13).** No MAX31865 board is fitted and
-> none is planned; SPI1 belongs to the SD card. The driver stays compiled (the
-> `ST` key remains valid in the config-string SPEC and simply raises its fault
-> path if selected), and this section is kept for a future node that fits one.
-- **Config key:** `ST`.
-- **Interface:** **SPI1** (`hspi1`) + a CS GPIO; optional DRDY on EXTI.
-- **Critical:** **Rref = 4.02 kΩ** for PT1000 (`MAX31865_RREF`), not 430 Ω. Set
-  `MAX31865_RTD_NOMINAL = 1000`. Choose 2/3/4-wire to match the probe.
-- **Config:** Vbias on, auto-convert, **50 Hz** mains reject (NZ). Let Vbias
-  settle ~10 ms before the first read.
-- **Convert:** ratio → `Rrtd = ratio/32768 × Rref` → Callendar–Van Dusen
-  (constants `A/B` in the driver; add the ITS-90 sub-zero extension for frost).
-- **Faults:** on the RTD fault bit, read/clear `max31865_read_fault()`.
+## 7 · Soil temperature — **PT1000 divider on A2** (`analog_sensors.{h,c}`)
+- **Config key:** `ST`. **Pin:** ADC_IN6 — PA10, Arduino **A2**.
+- **Interface — no front-end chip at all** (the MAX31865 was dropped,
+  LOGBOOK r18): a plain resistor divider, hardware-verified 2026-08-13 at
+  19.5–20.4 °C on the bench (LOGBOOK r20).
+
+  ```
+  3V3 ──[ ~900 Ω series ]── A2 ──[ PT1000 probe ]── GND
+  ```
+- **Ratiometric by construction:** the divider's top rail is the ADC's own
+  reference, so the rail voltage cancels exactly:
+  `R_rtd = Rs · counts / (4095 − counts)`, then the same Callendar–Van Dusen
+  conversion the MAX31865 used (`pt1000_ohms_to_celsius()`, sub-zero inverse
+  polynomial included — frost matters for soil).
+- **⚠️ The series resistor's value IS the calibration.** Sensitivity is only
+  ~3.6 counts/°C, so each ohm of error in `ANALOG_RTD_SERIES_OHMS`
+  (`analog_sensors.h`, 900.0 default) is ~0.26 °C. **Measure the fitted
+  resistor with a DMM and set the constant to that value**; fine-trim with
+  `set_cal` sensor_id 7. Expect ~±0.3 °C of quantisation jitter (1 count).
+- **⚠️ A2 is I²C1 SDA** — BME280 #2's bus. While the divider is fitted, `T2`
+  is electrically unusable (the divider holds SDA at ~1.8 V). The firmware
+  muxes PA10 to analog only for the conversion and returns it to I²C1 after,
+  so removing the divider restores `T2` with no firmware change.
+- **Fault detection:** open probe → the series R pulls A2 to the rail
+  (counts ≥ 4050 rejected); shorted probe → counts ≤ 50 rejected; anything
+  outside −60…120 °C rejected. All raise the normal `ST` fault path.
+- **Power:** with the top leg on permanent 3V3 the divider leaks
+  ~1.7 mA continuously (~40 mAh/day) and dissipates ~3 mW in the probe
+  (mild self-heating). For a field node, move the top leg to **VSENS** — the
+  read already happens while the rail is up; it is a wire move only.
+- **Expected values:** 0 °C = 1000 Ω ≈ 2153 counts; 20 °C = 1078 Ω ≈ 2231
+  counts; each °C ≈ +3.6 counts.
+
+### 7b · The MAX31865 alternative (not fitted)
+A future node needing better than ~±0.5 °C can fit a MAX31865 on SPI
+(`max31865.{h,c}` stays compiled): **Rref = 4.02 kΩ** for PT1000 (not 430 Ω),
+`MAX31865_RTD_NOMINAL = 1000`, 50 Hz mains reject, one-shot with bias off
+between reads. The A2 divider costs one resistor and no bus; the MAX31865
+buys 15-bit resolution and lead-resistance compensation (3/4-wire).
 
 ## 8 · Rain — tipping bucket (`pulse_counter.{h,c}`)
 - **Config key:** `R`. **Edge-counted → the node must stay awake while `R` is
@@ -239,7 +264,7 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
 | `T2` | Air B temp/RH/press | `bme280` (**I²C1**, board pins) | `air2_temp_c` / `air2_rh_pct` / `air2_press_hpa` | 9 / 11 / 12 |
 | `SM` | Soil moisture (10HS) | `analog_sensors` | `soil_moist_raw` | 14 |
 | `LW` | Leaf wetness | `analog_sensors` | `leaf_wet_raw` | 16 |
-| `ST` | Soil temperature | `max31865` | `soil_temp_c` | 18 |
+| `ST` | Soil temperature (PT1000, A2 divider) | `analog_sensors` | `soil_temp_c` | 18 |
 | `WS` | Wind speed / gust | `pulse_counter` | `wind_speed_ms` / `wind_gust_ms` | 20 / 24 |
 | `WD` | Wind direction | `analog_sensors` | `wind_dir_deg` | 22 |
 | `R` | Rain tips / mm | `pulse_counter` | `rain_tips` / `rain_mm` | 26 / 28 |

@@ -22,7 +22,7 @@ timetable**.
 | `SM` | Soil moisture | **Decagon 10HS** (capacitance/FDR) | ADC (A1) |
 | `LW` | Leaf wetness | **Decagon LWS** (dielectric) | ADC (A0) |
 | `WD` | Wind direction | **Davis 7911** vane potentiometer | ADC (A3) |
-| `ST` | Soil temperature | **PT1000** RTD via MAX31865 | *dropped from this node — driver kept* |
+| `ST` | Soil temperature | **PT1000** RTD | ADC (A2) via ~900 Ω divider — ratiometric |
 | `R` | Rainfall | tipping bucket | GPIO pulse count (EXTI) |
 | `WS` | Wind speed + gust | **Davis 7911** contact closure | ADC burst-sampled (A4) |
 | — | Battery voltage | INA219 | I²C — always sent |

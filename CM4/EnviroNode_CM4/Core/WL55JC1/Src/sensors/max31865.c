@@ -134,6 +134,14 @@ env_status_t max31865_read_celsius(float *t_c)
 
   float rt = 0.0f;
   if (max31865_read_ohms(&rt) != ENV_OK) return ENV_ERR;
+  return pt1000_ohms_to_celsius(rt, t_c);
+}
+
+/* Shared PT1000 conversion — also used by the A2 resistor-divider reading
+   (analog_sensors.c), which measures the same probe without a MAX31865. */
+env_status_t pt1000_ohms_to_celsius(float rt, float *t_c)
+{
+  if (t_c == NULL) return ENV_ERR;
 
   /* Positive branch: invert R = R0(1 + A.T + B.T^2) exactly. */
   const float z1 = -CVD_A;

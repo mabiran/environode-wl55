@@ -8,10 +8,11 @@ A new IoT **agrometeorological sensor node** on **STM32WL55JC** over **LoRaWAN**
 bidirectional. It periodically measures: air temp/humidity/pressure ×2 (2× BME280
 on **two separate I²C buses**), soil moisture (**Decagon 10HS**, ADC A1), leaf
 wetness (**Decagon LWS**, ADC A0), battery (INA219, I²C), wind direction (Davis
-7911 vane pot, ADC A3), rainfall (tipping-bucket pulse count), and wind speed
-(7911 contact, ADC burst-sampled on A4). Soil temperature (`ST`, PT1000 via
-MAX31865) stays in the SPEC but the **hardware is dropped from this node**.
-Uplinks a compact frame; accepts downlink config.
+7911 vane pot, ADC A3), rainfall (tipping-bucket pulse count), wind speed
+(7911 contact, ADC burst-sampled on A4), and soil temperature (`ST`, **PT1000
+via a ~900 Ω divider on A2/PA10** — ratiometric, pin muxed from I²C1 SDA per
+read, so `T2` is unusable while the divider is fitted; the MAX31865 is
+dropped). Uplinks a compact frame; accepts downlink config.
 Which sensors run, and how often, is set by one ASCII **sensor-set config string**
 in braces — `{T1,T2,ST,60}` — over downlink or console (`docs/CONFIG.md`).
 
@@ -57,9 +58,10 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
 - [x] Peripherals up: **I²C1** PA9/PA10 (BME280 #2, board pins), **I²C2** PA12/PA11
       (BME280 #1 via Grove shield + INA219), **SPI1** PA5/6/7 (SD card, **CS
       PB8/D5** — the pigtail landed there, firmware follows it; mode 0 per
-      transaction), **ADC** PB1 leaf / PB2 soil (10HS) / PB4 vane / PB14
-      wind-burst / PB13 batt, **EXTI3** PB3 (rain — the only interrupt-counted
-      sensor). MAX31865 dropped; PA4 parked.
+      transaction), **ADC** PB1 leaf / PB2 soil (10HS) / PA10 soil-temp
+      (PT1000 divider, muxed) / PB4 vane / PB14 wind-burst / PB13 batt,
+      **EXTI3** PB3 (rain — the only interrupt-counted sensor). MAX31865
+      dropped; PA4 parked.
 - [x] Sensor drivers implemented: `bme280` (Bosch compensation, forced mode),
       `max31865` (PT1000, one-shot + bias off, CVD + sub-zero), `analog_sensors`,
       `pulse_counter` (debounce, atomic snapshot, 3 s gust buckets).

@@ -50,6 +50,8 @@ extern ADC_HandleTypeDef hadc;
   * @{ */
 #define ENVNODE_ADC_CH_LEAF     ADC_CHANNEL_5    /*!< PB1  / A0 — leaf wetness   */
 #define ENVNODE_ADC_CH_SOIL     ADC_CHANNEL_4    /*!< PB2  / A1 — Decagon 10HS    */
+#define ENVNODE_ADC_CH_SOILTEMP ADC_CHANNEL_6    /*!< PA10 / A2 — PT1000 divider;
+                                    pin is muxed from I2C1_SDA per read        */
 #define ENVNODE_ADC_CH_WINDDIR  ADC_CHANNEL_3    /*!< PB4  / A3 — vane pot wiper */
 #define ENVNODE_ADC_CH_WINDSPD  ADC_CHANNEL_1    /*!< PB14 / A4 — speed contact  */
 #define ENVNODE_ADC_CH_BATT     ADC_CHANNEL_0    /*!< PB13 / A5 — batt divider   */

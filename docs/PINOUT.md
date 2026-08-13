@@ -40,7 +40,7 @@ shared SRAM2 mailbox (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 | 5 | Wind **direction** | **Davis 7911** vane pot (20 kΩ) | **ADC_IN3** | PB4 (**A3**) | green = wiper; 0 Ω = N, 10 k = S; 1 MΩ pull-down for the dead band |
 | 6 | Battery voltage | resistor divider | **ADC_IN0** | PB13 (**A5**) | fallback; primary is the INA219 bus voltage. Moved off A4 to free it for wind speed |
 | 6b | Battery V + I | INA219 | **I²C2** | PA12/PA11 | addr `0x45`, R_shunt 0.1 Ω *(reused)* |
-| 7 | Soil temperature | **PT1000 RTD** + MAX31865 | **SPI1** | PA5 SCK / PA6 MISO / PA7 MOSI, CS PA4 | **dropped from this node 2026-08-13** — no board fitted; SPI1 serves the SD card |
+| 7 | Soil temperature | **PT1000 RTD**, ~900 Ω divider off 3V3 | **ADC_IN6** | PA10 (**A2**) | ratiometric (`R = Rs·c/(4095−c)`); pin muxed from I²C1 SDA per read — **`T2` unusable while fitted**. MAX31865 variant dropped 2026-08-13 |
 | 7b | Offline CSV log | **SD card** (SPI mode) | **SPI1** | PA5 SCK / PA6 MISO / PA7 MOSI, **CS PB8 (D5)** | mode 0, init ≤400 kHz then 2 MHz; ~10 k pull-up on CS; FAT32 ≤32 GB; 3V3 direct (12–35 mA writes) |
 | 8 | Rain | tipping-bucket reed | **GPIO EXTI3** | PB3 (D3) | pull-up, falling edge, SW debounce |
 | 9 | Wind **speed** | **Davis 7911** contact closure | **ADC_IN1** *(burst-sampled)* | PB14 (**A4**) | black = contact to GND; 47 kΩ pull-up at the connector; 1 Hz = 2.25 mph. Sampled ~1 kHz for 3 s so the node can still sleep |
@@ -138,9 +138,10 @@ so `PB12` (D2) is free again.
   pulse input is safe — but printf-over-SWO trace is not available.
 - **I²C pull-ups:** both buses need 4.7 kΩ to 3V3. Most BME280 breakouts include
   them; the Grove shield does not add any.
-- **PT1000 vs PT100:** the MAX31865 reference resistor must be ~4×Rnominal —
-  **4.02 kΩ (0.1 %)** for PT1000 (430 Ω is PT100). Same value in firmware
-  (`MAX31865_RREF`), and pick 2/3/4-wire to match the probe wiring.
+- **PT1000 series resistor:** the A2 divider's temperature accuracy is set by
+  how well `ANALOG_RTD_SERIES_OHMS` matches the fitted part — ~0.26 °C per ohm
+  of error. Measure it with a DMM, don't trust the band code. (If a future
+  node fits a MAX31865 instead: Rref = 4.02 kΩ for PT1000, not 430 Ω.)
 - **Pulse debounce:** reed switches bounce for milliseconds — debounced in
   software (`PULSE_DEBOUNCE_MS`), optionally an RC + Schmitt input as well.
 - **ADC clock:** the core runs HSI 16 MHz at voltage scale 2, so the ADC is
@@ -152,9 +153,10 @@ so `PB12` (D2) is free again.
 
 ## Peripheral inventory (what the firmware instantiates)
 
-`I2C1` (PA9/PA10), `I2C2` (PA12/PA11), `SPI1` (PA5/PA6/PA7 + PA4 CS),
-`ADC` (IN5 leaf, IN4 soil, IN3 vane, IN1 wind-speed burst, IN0 battery —
-sequential single conversions,
+`I2C1` (PA9/PA10 — SDA muxed to ADC_IN6 per `ST` read), `I2C2` (PA12/PA11),
+`SPI1` (PA5/PA6/PA7 + PB8 CS, SD card),
+`ADC` (IN5 leaf, IN4 soil, IN6 soil-temp divider, IN3 vane, IN1 wind-speed
+burst, IN0 battery — sequential single conversions,
 rank 1 re-armed per channel), `RTC` (LSE, also the STOP2 wake-up source),
 `EXTI3` (rain only — wind speed is ADC burst-sampled on IN1), `USART1`,
 `USART2`, and the inherited `IWDG` watchdog. The SubGHz radio + LoRaMAC live

@@ -12,11 +12,11 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r19 — 2026-08-13 |
+| **Revision** | r20 — 2026-08-13 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
-| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry — datasheet bullseye), flash ring and **SD CSV logging** all verified on the board. BME280s answer intermittently (I²C contact); no gateway yet. See [§14](#14-build-log) r18 |
+| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS (550 counts / 443 mV stable)**, **PT1000 divider (19.5–20.4 °C)**, flash ring and **SD CSV logging** all verified on the board. BME280s answer intermittently (I²C contact); no gateway yet. See [§14](#14-build-log) r18–r20 |
 | **Repository** | `Hardware/EnviroNode-WL55` (private) |
 
 ---
@@ -162,7 +162,7 @@ graph LR
 | Air temperature / humidity / pressure ×2 | 2 × BME280 on separate I²C buses | `T1`, `T2` |
 | Soil moisture | **Decagon 10HS** (capacitance/FDR, 3-wire analog) | `SM` |
 | Leaf wetness | **Decagon LWS** (dielectric, 3-wire analog) | `LW` |
-| Soil temperature | PT1000 RTD via MAX31865 — **dropped from this node, r18** | `ST` |
+| Soil temperature | PT1000 RTD via ~900 Ω divider on A2 (MAX31865 dropped r18; divider live r20) | `ST` |
 | Wind speed + gust | Davis 7911 contact closure, ADC burst-sampled | `WS` |
 | Wind direction | Davis 7911 vane potentiometer (20 kΩ) | `WD` |
 | Rainfall | tipping-bucket reed | `R` |
@@ -216,7 +216,7 @@ audio, no Pi, and no recording timetable. See [D-01](#15-decision-register).
 | Air T/RH/P ×2 | **BME280** breakout ×2 | I²C | chip id `0x60`, addr `0x76` or `0x77` (auto-probed) |
 | Soil moisture | **Decagon 10HS** ("EC-10 HS" at Solem) — capacitance/FDR, 3-wire analog | analog into **A1**, excite from **VSENS** (12 mA) | raw 12-bit counts; curve off-node; full spec in [SENSORS.md §3](SENSORS.md) |
 | Leaf wetness | **Decagon Devices LWS** (METER; successor **PHYTOS 31**) — dielectric, 3-wire analog | analog into **A0**, excite from **VSENS** | raw 12-bit counts; full spec in [SENSORS.md §4](SENSORS.md) |
-| ~~Soil temperature~~ | ~~**PT1000** RTD probe~~ | — | **dropped from this node (r18)** |
+| Soil temperature | **PT1000** RTD probe, 2-wire + **~900 Ω series resistor** (measure it!) | analog divider into **A2** | `ANALOG_RTD_SERIES_OHMS` = the measured resistor (MAX31865 dropped r18; divider r20) |
 | Wind speed | **Davis 7911** contact closure | **A4**, ADC burst-sampled, 47 kΩ pull-up | `ANEMO_MS_PER_HZ = 1.00584` (1 Hz = 2.25 mph) |
 | Wind direction | **Davis 7911** vane pot, 20 kΩ | analog into **A3**, 1 MΩ pull-down | linear 0–360°, plus north offset |
 | Rainfall | tipping bucket, reed *(confirm)* | dry contact to GND | `RAIN_MM_PER_TIP` (default 0.2794 mm) |
@@ -372,7 +372,7 @@ if the sign comes out inverted either swap VIN+/VIN− or flip it in software.
 | S2 | **Davis 7911** direction → `WD` | **A3** (PB4) — *green* (wiper) | **VSENS** — *yellow* | **R2 1 MΩ** A3→GND |
 | S3 | **Davis 7911** speed → `WS` | **A4** (PB14) — *black* (contact), **ADC, burst-sampled** | — (switch to GND, *red*) | **R1 47 kΩ** A4→3V3 — **required**, the internal pull-up is unavailable on an analog pin |
 | S4 | Rain tipping bucket → `R` | **D3** (PB3) | — (switch to GND) | internal pull-up; 10 kΩ + 100 nF optional |
-| ~~S5~~ | ~~MAX31865 + PT1000 → `ST`~~ | — | — | **dropped 2026-08-13** — no board fitted, SPI1 serves the SD card; `ST` in a config string just raises its fault path |
+| S5 | **PT1000** probe → `ST` (MAX31865 dropped r18; divider instead, r20) | **A2** (PA10) — probe between A2 and GND | — | **~900 Ω series resistor A2→3V3** — measure it, set `ANALOG_RTD_SERIES_OHMS` (~0.26 °C/Ω). ⚠️ occupies I²C1 SDA: `T2` unusable while fitted |
 | S6 | Decagon **10HS** soil moisture → `SM` | **A1** (PB2) — *red* wire | **VSENS** — *white* (**12 mA!** never a GPIO) | bare→GND; output 300–1250 mV regulated; shares the Grove A0 socket with S1 |
 | S7 | **SD-card breakout** (3.3 V-native) | SCK **D13**, MISO **D12**, MOSI **D11**, CS **D5** (PB8) | 3V3 direct, **not** VSENS | ~10 kΩ pull-up on CS; 100 nF + 10 µF at the breakout; FAT32 card ≤32 GB |
 | — | Status LED | **D8** (PC2) | — | ~1 kΩ series |
@@ -1057,8 +1057,9 @@ Set these to the parts actually fitted, then re-run the affected test.
 | `ANEMO_MS_PER_HZ` | `pulse_counter.h` | 0.34 | m/s per Hz of anemometer pulses |
 | `RAIN_DEBOUNCE_MS` | `pulse_counter.h` | 100 | minimum time between valid tips |
 | `WIND_DEBOUNCE_MS` | `pulse_counter.h` | 5 | minimum time between valid pulses |
-| `MAX31865_RREF` | `max31865.h` | 4020 | reference resistor, **PT1000** |
-| `MAX31865_RTD_NOMINAL` | `max31865.h` | 1000 | RTD resistance at 0 °C |
+| `ANALOG_RTD_SERIES_OHMS` | `analog_sensors.h` | 900.0 | **set to the DMM-measured series resistor** — ~0.26 °C per ohm of error |
+| `MAX31865_RREF` | `max31865.h` | 4020 | (not fitted) reference resistor, **PT1000** |
+| `MAX31865_RTD_NOMINAL` | `max31865.h` | 1000 | RTD resistance at 0 °C — also used by the divider's CVD math |
 | `ENVNODE_RTD_WIRES` | `envnode_sensors.c` | 3-wire | match the probe |
 | `VBAT_RTOP_OHMS` / `VBAT_RBOT_OHMS` | `pins_config.h` | 56060 / 14711 | measured divider resistors |
 | vane north offset | runtime | 0° | set with downlink `0x05` |
@@ -1073,7 +1074,8 @@ Set these to the parts actually fitted, then re-run the affected test.
 |---|---|---|
 | `air1=n` or `air2=n` at boot | wrong bus, no pull-ups, or address strap | check [Table 4](#32-wiring-map); remember the shield I²C is **I²C2**; scope SCL for clock |
 | Both BME280s read identically | both on the same bus | they must be on separate buses — that is the whole reason for I²C1 |
-| `rtd=n` | expected — no MAX31865 is fitted on this node (dropped r18); on a node that has one: CS on D10, MISO on D12 (floating MISO reads `0xFF`) | select a set without `ST`, or fit the board |
+| `rtd=n` | the A2 divider's trial read failed at boot: probe unplugged (A2 pinned at the rail), shorted, or no divider fitted | check the ~900 Ω A2→3V3 resistor and the probe to GND; `ST` reads live, so plugging in after boot works anyway |
+| Soil temp off by a constant few °C | series resistor's real value ≠ `ANALOG_RTD_SERIES_OHMS` (~0.26 °C/Ω) | measure the resistor, update the constant (or `set_cal` id 7) |
 | Soil temp wildly wrong | PT100 board fitted (430 Ω Rref) | fit a 4.02 kΩ Rref board, or change `MAX31865_RREF` |
 | `nucleo sd` finds no card | wrong CS pin, dead card, exFAT ≥64 GB card, or no decoupling | read the automatic R1 trace: `0xFF` = no card/wrong CS (`nucleo cshunt` finds the real pin), `0x00` = stuck-low data line (dead card), `0x01` = card answering (filesystem problem — reformat FAT32) |
 | Soil/leaf counts stuck near 0 or 4095 | probe not powered, or wrong pin | verify against [Table 4](#32-wiring-map) |
@@ -1396,6 +1398,42 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-13 — PT1000 back, as a one-resistor divider on A2; 10HS live-verified (r20)
+
+**Soil temperature returned to the build without the MAX31865.** The probe now
+hangs off a plain divider: **3V3 —[~900 Ω]— A2 (PA10/ADC_IN6) —[PT1000]— GND**.
+Because the divider's top rail is the ADC's own reference, the measurement is
+**ratiometric** — `R_rtd = Rs·counts/(4095−counts)` with the rail voltage
+cancelled exactly — and the resistance goes through the *same* Callendar–Van
+Dusen code the MAX31865 used (`pt1000_ohms_to_celsius()`, now exported from
+`max31865.c`; sub-zero inverse polynomial included). Hardware-verified live:
+**20.4 / 19.5 / 19.5 °C** on the bench probe ([D-29](#15-decision-register)).
+
+**The pin trick a replicator must understand:** A2 is **PA10 = I²C1 SDA**
+(BME280 #2). `analog_rtd_a2_celsius()` muxes PA10 to analog for the one
+conversion and hands it straight back to I²C1's AF — but the *divider itself*
+holds SDA at ~1.8 V, so **`T2` is electrically unusable while the divider is
+fitted**. Removing the divider restores `T2` with no firmware change. `ST`
+presence at boot is a trial conversion (a passive divider cannot be probed);
+an open probe pins A2 at the rail (counts ≥ 4050 → fault), a short reads ~0.
+
+**Calibration lives in one constant:** sensitivity is only ~3.6 counts/°C, so
+each ohm of error in `ANALOG_RTD_SERIES_OHMS` (`analog_sensors.h`, 900.0
+default) is **~0.26 °C** — measure the fitted resistor with a DMM and set the
+constant; fine-trim with `set_cal` sensor_id 7. Power note: on permanent 3V3
+the divider leaks ~1.7 mA (~40 mAh/day); moving its top leg to **VSENS** is a
+wire move only — the read already runs while the rail is up.
+
+**Also in r20:** the 10HS was live-verified end to end — a marginal socket
+contact first produced the floating-pin signature (readings wandering in
+lockstep with the disconnected leaf pin, ~90 counts apart — the ADC sample
+cap's residue), then, re-seated, a rock-stable **550 counts / 443 mV** (±3).
+The floating-vs-driven test — *stable within a few counts = driven; wandering
+in step with a neighbour = floating* — is now the standard bench check for any
+analog channel. RTC was re-set after the power-down (backup domain lost, VBAT
+rides VDD) and the relocated flash ring got its one-time erase; both flash and
+SD rows now carry correct 2026-08-13 timestamps.
 
 ### 2026-08-13 — Decagon 10HS soil moisture on A1 (r19)
 
@@ -1912,8 +1950,9 @@ If you built a node before this date, LW and SM are swapped relative to yours.
 | D-24 | SD CS is **D5 (PB8)** — the firmware follows the solder joint | The pigtail's CS wire landed one mirror-count off from the intended D2; `nucleo cshunt` proved it electrically. Repointing one `#define` beats re-melting a verified joint | Re-soldering to D2 — risks the joint and the pad for zero functional gain |
 | D-25 | **FAT32 only** (`_FS_EXFAT 0`, 8.3 names) | exFAT support costs flash the 118 K budget does not have, and FAT32 covers ≤32 GB — years of CSV. A 64 GB factory card silently mounts nothing, which is now documented rather than supported | Enabling exFAT — blows the flash budget for capacity the node will never fill |
 | D-26 | **B1 = sleep off, B2 = sleep on** hardware buttons | A sleeping node's console wakes for ~10 s per cycle, making bench sessions a race; a button needs no terminal and works mid-race | Console-only control (`nucleo sleep off`) — needs the console to be awake, which is the very problem |
-| D-27 | **MAX31865 dropped from this node**; `ST` stays in the SPEC | No board fitted, none planned, and SPI1 is the SD card's now. Keeping `ST` valid costs nothing (fault path) and keeps the config grammar stable for a future node that fits one | Ripping `ST` out of the SPEC and payload — breaks frame compatibility for one absent sensor |
+| D-27 | **MAX31865 dropped from this node**; `ST` stays in the SPEC *(ST since re-implemented by [D-29](#15-decision-register))* | No board fitted, none planned, and SPI1 is the SD card's now. Keeping `ST` valid kept the config grammar stable — which is exactly what let D-29 revive it as a divider with no SPEC change | Ripping `ST` out of the SPEC and payload — breaks frame compatibility for one absent sensor |
 | D-28 | 10HS excitation from the **switched rail**, mV conversion on-node, curve off-node | 12 mA is 3× the LWS — a GPIO would sag below the sensor's 3.0 V floor (D-19's logic, harder). The regulated output makes mV absolute, so the console prints mV, but the polynomial stays off-node where it can be refined without reflashing | Wiring to socket VCC (continuous ~12 mA ≈ 288 mAh/day); applying the cubic on-node (locks the calibration into the firmware) |
+| D-29 | PT1000 read through a **~900 Ω divider on A2**, ratiometric, pin muxed from I²C1 SDA per read | One resistor replaces the dropped MAX31865; top rail = ADC reference so the rail voltage cancels; the CVD math was already written. ~±0.3 °C quantisation is fine for soil. Cost accepted: `T2` unusable while the divider is fitted, and accuracy rides on measuring the series resistor (~0.26 °C/Ω) | Refit a MAX31865 (15-bit + lead compensation, but a chip, a bus and 4 wires for a soil probe); a dedicated free ADC pin (none left on the headers with LW/SM/WD/WS/batt placed) |
 
 ---
 

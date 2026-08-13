@@ -63,13 +63,21 @@ env_status_t envnode_sensors_init(void)
   if (bme280_init_autoaddr(&s_air2, &hi2c1) == ENV_OK) s_present |= PRESENT_AIR2;
   else rc = ENV_ERR;
 
-  /* Soil temperature — PT1000 through the MAX31865 on SPI1. */
-  if (max31865_init(&hspi1, ENV_RTD_CS_Port, ENV_RTD_CS_Pin, ENVNODE_RTD_WIRES) == ENV_OK) s_present |= PRESENT_RTD;
-  else rc = ENV_ERR;
-
   /* Analog block — soil / leaf / vane / battery divider. */
   if (analog_init() == ENV_OK) s_present |= PRESENT_ANALOG;
   else rc = ENV_ERR;
+
+  /* Soil temperature — PT1000 through the A2 resistor divider (the MAX31865
+     was dropped from this node, LOGBOOK r18/r20). The divider is passive, so
+     "present" = a trial conversion lands inside the plausible range; an open
+     or missing probe pins the pin at the rail and fails it. Needs the analog
+     block, hence after analog_init(). Deliberately not rc-fatal: the probe is
+     optional and its absence is reported per-cycle by the ST fault path. */
+  {
+    float t_trial;
+    if ((s_present & PRESENT_ANALOG) && analog_rtd_a2_celsius(&t_trial) == ENV_OK)
+      s_present |= PRESENT_RTD;
+  }
 
   /* Rain + wind pulse counters (EXTI lines are armed in MX_GPIO_Init). */
   pulse_counter_init();
@@ -147,9 +155,11 @@ static env_status_t envnode_sample_common(sensor_readings_t *out, int consume_pu
     }
   }
 
-  /* --- soil temperature (PT1000 / MAX31865) --- */
+  /* --- soil temperature (PT1000 via the A2 divider) ---
+     Read live rather than gated on the boot-time presence bit: a probe plugged
+     in after boot just starts working. */
   if (en & SENS_OK_PT1000) {
-    if ((s_present & PRESENT_RTD) && max31865_read_celsius(&out->soil_temp_c) == ENV_OK) {
+    if (analog_rtd_a2_celsius(&out->soil_temp_c) == ENV_OK) {
       out->soil_temp_c += cal_f(ENVCFG_CAL_SOIL_T);
       out->status |= SENS_OK_PT1000;
     } else {
