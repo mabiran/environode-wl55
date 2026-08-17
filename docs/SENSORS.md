@@ -14,7 +14,7 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
 > console before trusting a field deployment.
 >
 > Console: `nucleo sensors` prints one full frame (non-destructive — it does not
-> consume the rain/wind interval), `nucleo uplink now` sends the 30-byte frame,
+> consume the rain/wind interval), `nucleo uplink now` sends the 32-byte frame,
 > `nucleo set {…}` (or a bare `{…}` line) selects the sensor set and interval,
 > `nucleo interval <min>` changes just the uplink period, `info` shows the LoRaWAN
 > identity, the canonical config string, and which drivers came up at boot.

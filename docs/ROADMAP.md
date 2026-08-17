@@ -32,7 +32,7 @@ at every step (`flash.ps1 -Build -NoFlash`).
 ## Phase 3 — Application ✅ (mostly done)
 - [x] Sampling scheduler: first frame ~60 s after boot, then every configured
       interval (default 15 min); retries in 60 s when the radio refuses.
-- [x] Payload pack → 30-byte FPort-1 frame per `docs/PAYLOAD.md`.
+- [x] Payload pack → 32-byte FPort-1 frame (fmt 0x02, batt mA r22) per `docs/PAYLOAD.md`.
 - [x] Hand-off to CM0+ mailbox (CM0+ honours `mb->port`, so FPort 1 is used).
 - [ ] Verify on TTN with the JS decoder (needs hardware + gateway).
 - [x] AudioMoth paths removed.

@@ -21,7 +21,7 @@ did, what is proven, and what remains open.
 EnviroNode-WL55 is a solar-capable field node that measures up to nine
 agrometeorological channels — paired air temperature/humidity/pressure, leaf
 wetness, soil moisture, soil temperature, wind speed and direction, rainfall,
-and battery state — and reports them over LoRaWAN in a single 30-byte frame.
+and battery state — and reports them over LoRaWAN in a single 32-byte frame.
 The node is reconfigurable in the field and over the air by a human-readable
 configuration string (`{LW,T1,T2,15}`), sleeps in STOP2 between measurement
 cycles, survives total power loss without losing its network identity or its
@@ -207,7 +207,7 @@ receive windows and gives a console operator a hand-hold each cycle.
 
 ### 5.4 The measurement cycle
 
-Wake → sample selected sensors → pack the 30-byte frame → **append to the
+Wake → sample selected sensors → pack the 32-byte frame → **append to the
 offline log** → hand to the radio → awake window (downlinks drained, commands
 served) → sleep. The log append is deliberately *before* radio involvement: a
 node that never joined still records (§8), and the radio is guaranteed idle
@@ -221,7 +221,7 @@ rainfall (D-17).
 
 ### 6.1 Uplink
 
-FPort 1, fixed 30 bytes, little-endian scaled integers, one frame per cycle;
+FPort 1, fixed 32 bytes (fmt 0x02 — battery voltage and current always aboard), little-endian scaled integers, one frame per cycle;
 sentinels for absent data; battery always present. Byte-exact layout and the
 TTN JavaScript decoder: [PAYLOAD.md](PAYLOAD.md). A planned revision (fmt
 0x01→0x02) appends a u16 node id at offset 30 (§10).

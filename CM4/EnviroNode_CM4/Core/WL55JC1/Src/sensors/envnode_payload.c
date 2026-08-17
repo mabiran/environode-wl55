@@ -91,7 +91,13 @@ size_t envnode_payload_pack(const sensor_readings_t *r, uint8_t *buf, size_t buf
     put_u16(&buf[26], ENVNODE_SENTINEL_U16); put_u16(&buf[28], ENVNODE_SENTINEL_U16);
   }
 
-  return ENVNODE_UPLINK_LEN;            /* always 30 on success                */
+  /* off 30 : battery current, mA, discharge positive (charging negative) —
+     always sent like the voltage at off 2; the sentinel (not 0 mA) marks a
+     frame whose INA219 did not answer. */
+  put_i16(&buf[30], r->batt_i_ok ? sat_i16(r->batt_i_a * 1000.0f)
+                                 : ENVNODE_SENTINEL_I16);
+
+  return ENVNODE_UPLINK_LEN;            /* always 32 on success                */
 }
 
 /* --- sensor-set configuration string -------------------------------------- */

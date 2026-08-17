@@ -2,7 +2,7 @@
 
 **A solar/battery agrometeorological sensor node on the STM32WL55JC, reporting
 over LoRaWAN (bidirectional).** Every interval it samples a full weather-and-soil
-picture, packs a fixed 30-byte frame and uplinks it to The Things Network on
+picture, packs a fixed 32-byte frame and uplinks it to The Things Network on
 FPort 1. It is reconfigured remotely: which sensors run and how often is one
 ASCII string in braces, sent as a downlink or typed on the ST-Link console.
 
@@ -91,7 +91,7 @@ firmware does / doesn't do yet.
 ## Project status
 
 🟢 **Phases 0–4 (largely done):** peripherals up (hand-written init — there is no
-`.ioc`), all four sensor drivers written, sampling scheduler + 30-byte FPort-1
+`.ioc`), all four sensor drivers written, sampling scheduler + 32-byte FPort-1
 uplink, FPort-10 binary command table, the `{…}` sensor-set config string, and
 OTAA identity + node config persisted in flash so they survive a power cut.
 

@@ -70,7 +70,9 @@ typedef struct {
   float    air2_temp_c, air2_rh_pct, air2_press_hpa;  // BME280 #2 on I2C2
   uint16_t soil_moist_raw;   // ADC counts (or permille after calibration)
   uint16_t leaf_wet_raw;     // ADC counts
-  float    batt_v;           // volts (via divider)
+  float    batt_v;           // volts (INA219 bus voltage; divider fallback)
+  float    batt_i_a;         // amps, discharge positive (INA219)
+  uint8_t  batt_i_ok;        // 1 = batt_i_a was actually measured this frame
   float    wind_dir_deg;     // 0..359.9 (vane potentiometer)
   float    soil_temp_c;      // PT1000 via MAX31865
   float    wind_speed_ms;    // interval average

@@ -36,7 +36,9 @@ extern "C" {
 #include <stdint.h>
 #include <stddef.h>
 
-#define ENVLOG_FRAME_LEN   (30u)   /*!< the FPort-1 frame, verbatim            */
+#define ENVLOG_FRAME_LEN   (32u)   /*!< the FPort-1 frame, verbatim (fmt 0x02;
+                                        30-byte fmt-0x01 records fail their
+                                        checksum and are skipped on dump)      */
 #define ENVLOG_CAPACITY    (153u)  /*!< 3 pages × 51 — the SD card is the archive now */
 
 /**

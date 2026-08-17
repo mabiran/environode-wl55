@@ -113,7 +113,7 @@ Every pass (~50 ms pacing), in order:
 `EnvNode_ScheduleTick()` fires when the interval elapses (or `uplink_now`):
 
 ```
- selected sensors sampled ──► 30-byte frame packed (PAYLOAD.md)
+ selected sensors sampled ──► 32-byte frame packed (PAYLOAD.md)
      │  (VSENS rail: on → 15 ms settle → convert → off)
      │  (WS selected: 3 s ADC burst on the speed contact)
      ▼

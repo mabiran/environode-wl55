@@ -36,8 +36,8 @@ typedef struct __attribute__((aligned(8))) {
   uint32_t epoch;
   uint8_t  frame[ENVLOG_FRAME_LEN];
   uint16_t sum;
-  uint32_t pad;
-} log_rec_t;                                    /* 40 bytes                    */
+  uint16_t pad;                                 /* was u32 when the frame was 30 */
+} log_rec_t;                                    /* 4+32+2+2 = 40 bytes          */
 
 static uint32_t s_head;    /*!< next slot to write, 0..REC_TOTAL-1             */
 static uint32_t s_count;   /*!< valid records                                  */

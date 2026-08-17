@@ -8,11 +8,14 @@
 #define ADC_VREF_VOLT       (3.3f)
 #define ADC_FULL_SCALE      (4095.0f)
 
-/* --- LiFePO4 (4S) voltage thresholds (resting/light load) --- */
-#define VBAT_MAX_CHARGE_V   (14.3f)
-#define VBAT_FULL_REST_V    (13.4f)
-#define VBAT_WARN_REST_V    (12.8f)
-#define VBAT_CUTOFF_LOAD_V  (11.2f)
+/* --- Battery: 1S Li-ion, two 3.7 V / 6600 mAh cells in PARALLEL (2P) ------
+   Parallel keeps the pack at cell voltage: 4.2 V full, ~3.0 V empty. The old
+   4S-LiFePO4 thresholds (14.3/13.4/12.8/11.2) came from KoreroNet's pack and
+   were wrong for this hardware — fitted 2026-08-17, LOGBOOK r22. */
+#define VBAT_MAX_CHARGE_V   (4.25f)
+#define VBAT_FULL_REST_V    (4.15f)
+#define VBAT_WARN_REST_V    (3.50f)
+#define VBAT_CUTOFF_LOAD_V  (3.00f)
 
 /* --- INA219 + battery --- */
 #define INA219_I2C_ADDR_7B  (0x45)             /* change to 0x40 if needed */
@@ -23,8 +26,8 @@
 #define SHUNT_OHMS          (0.1f)
 
 /* --- Battery capacity & charge detection (moved from scattered #defines) --- */
-#define BATTERY_NOMINAL_mAh          (12000.0f)  /* pack nominal capacity */
-#define CHARGE_VOLTAGE_THRESHOLD_V   (14.1f)    /* voltage considered “full” */
+#define BATTERY_NOMINAL_mAh          (13200.0f)  /* 2 x 6600 mAh in parallel */
+#define CHARGE_VOLTAGE_THRESHOLD_V   (4.15f)     /* voltage considered "full" */
 #define CHARGE_NEGATIVE_CURRENT_A    (-0.05f)    /* charging if I <= this */
 #define CHARGE_CONFIRM_MS            (5000u)     /* must hold for this long */
 

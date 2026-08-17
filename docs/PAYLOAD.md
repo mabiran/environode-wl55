@@ -14,12 +14,13 @@ Two downlink transports coexist:
 
 ## Uplink — sensor frame (FPort 1)
 
-`fmt = 0x01`. Fixed 30-byte layout. Scaled integers avoid floats on-air and in
-the decoder.
+`fmt = 0x02`. Fixed 32-byte layout. Scaled integers avoid floats on-air and in
+the decoder. *(fmt 0x01 was the 30-byte layout without battery current —
+retired 2026-08-17; a decoder that accepts both keys on byte 0.)*
 
 | Off | Field | Type | Encoding | Unit / range |
 |----:|---|---|---|---|
-| 0 | `fmt` | u8 | `0x01` | frame-format id |
+| 0 | `fmt` | u8 | `0x02` | frame-format id |
 | 1 | `status` | u8 | bitfield (below) | sensor-ok / error flags |
 | 2 | `batt_mV` | u16 | raw | mV (0–65535) |
 | 4 | `air1_temp` | i16 | ×100 | °C (−327.68…327.67) |
@@ -36,6 +37,7 @@ the decoder.
 | 24 | `wind_gust` | u16 | ×100 | m/s (max over interval) |
 | 26 | `rain_tips` | u16 | raw | bucket tips this interval |
 | 28 | `rain_mm` | u16 | ×100 | mm this interval (derived) |
+| 30 | `batt_mA` | i16 | raw mA | battery current, **discharge positive**, charging negative; `0x7FFF` = no INA219 fitted |
 
 **`status` bitfield** (bit set = OK unless noted):
 `b0` air1 ok · `b1` air2 ok · `b2` soil-moist ok · `b3` leaf ok · `b4` PT1000 ok ·
@@ -49,16 +51,19 @@ per-sensor logic / a follow-up diagnostic uplink).
 sensor set ([CONFIG.md](CONFIG.md)): a sensor that is switched off sends its
 sentinel with its ok-bit clear and does **not** set `b7 fault` — nothing is
 broken, it simply was not asked for. Only a *failed* read raises `b7`.
-`batt_mV` is never selectable and is always present.
+`batt_mV` and `batt_mA` are never selectable and are always present (the
+current carries its own `0x7FFF` sentinel instead of a status bit — the status
+byte is full).
 
 ### TTN JavaScript decoder (starter)
 ```js
 function decodeUplink(input) {
   const b = input.bytes, dv = new DataView(new Uint8Array(b).buffer);
-  if (input.fPort !== 1 || b[0] !== 0x01) return { warnings: ["unknown frame"], data: {} };
+  if (input.fPort !== 1 || (b[0] !== 0x01 && b[0] !== 0x02))
+    return { warnings: ["unknown frame"], data: {} };
   const i16 = o => dv.getInt16(o, true), u16 = o => dv.getUint16(o, true);
   const st = b[1];
-  return { data: {
+  const data = {
     status: st,
     batt_V:      u16(2) / 1000,
     air1:  { t: i16(4)/100,  rh: b[6]/2,  p: u16(7)/10 },
@@ -68,7 +73,10 @@ function decodeUplink(input) {
     soil_temp:     i16(18)/100,
     wind: { speed: u16(20)/100, dir: u16(22)/10, gust: u16(24)/100 },
     rain: { tips: u16(26), mm: u16(28)/100 },
-  }};
+  };
+  if (b[0] >= 0x02 && b.length >= 32 && i16(30) !== 0x7FFF)
+    data.batt_mA = i16(30);   // discharge positive, charging negative
+  return { data };
 }
 ```
 
@@ -163,7 +171,7 @@ AppKey survives a full power loss (`envnode_keystore.c`).
 ---
 
 ## Sizing / region notes
-- 30-byte uplink fits AU915 **DR2+** (and US915). If you must fit DR0/DR1, split
+- The 32-byte uplink fits AU915 **DR2+** (and US915). If you must fit DR0/DR1, split
   into two frames (air block / weather block) or drop the derived `rain_mm`.
 - Uplink cadence is a power/airtime trade-off — default **every 15 min**
   (`set_interval`), with `uplink_now` for on-demand reads. Respect the regional

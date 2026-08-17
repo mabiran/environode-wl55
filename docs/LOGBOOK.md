@@ -12,11 +12,11 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r21 — 2026-08-13 |
+| **Revision** | r22 — 2026-08-17 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
-| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS (550 counts / 443 mV stable)**, **PT1000 divider (19.5–20.4 °C)**, flash ring and **SD CSV logging** all verified on the board. BME280s answer intermittently (I²C contact); no gateway yet. See [§14](#14-build-log) r18–r20 |
+| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS**, **PT1000 divider**, **rain (0.2 mm/tip)**, **INA219 (4.08 V / +118 mA)**, flash ring and **SD CSV logging** all verified on the board. BME280s answer intermittently (I²C contact); wind cups/vane motion test and gateway join still pending. See [§14](#14-build-log) r18–r22 |
 | **Repository** | `Hardware/EnviroNode-WL55` (private) |
 
 ---
@@ -166,7 +166,7 @@ graph LR
 | Wind speed + gust | Davis 7911 contact closure, ADC burst-sampled | `WS` |
 | Wind direction | Davis 7911 vane potentiometer (20 kΩ) | `WD` |
 | Rainfall | tipping-bucket reed | `R` |
-| Battery voltage (+ current) | INA219 (divider deliberately not fitted, D-20) | always on |
+| Battery voltage **and current** | INA219, high-side 0.1 Ω shunt (divider deliberately not fitted, D-20) — both on every frame, fmt 0x02 | always on |
 
 Two BME280s are used on **two separate I²C buses** because both chips answer at
 the same address pair (`0x76`/`0x77`) and the pair must be readable
@@ -201,7 +201,7 @@ audio, no Pi, and no recording timetable. See [D-01](#15-decision-register).
 | ~~RTD front-end~~ | ~~**MAX31865 breakout**~~ | 0 | **dropped from this node (r18, [D-27](#15-decision-register))**; if a future node fits one, Rref must be 4.02 kΩ ([D-05](#15-decision-register)) |
 | SD logger | 3.3 V-native SD breakout + **FAT32 card ≤32 GB** | 1 | SPI1, CS **D5/PB8**; 10 kΩ CS pull-up, 100 nF+10 µF at the socket ([§12A](#12a-future-functionality--sd-card-mass-logging)) |
 | Battery monitor | **INA219** breakout, addr `0x45` | 1 | On the shield I²C bus; 0.1 Ω shunt |
-| Battery | LiFePO₄ **4S**, ~12 Ah *(confirm)* | 1 | Thresholds in `pins_config.h` assume 4S LiFePO₄ |
+| Battery | **Li-ion 1S 2P** — 2 × 3.7 V / 6600 mAh in parallel = 13 200 mAh | 1 | `pins_config.h` thresholds: 4.2 V full / 3.0 V empty (r22; was spec'd 4S LiFePO₄) |
 | Solar + charger | *(confirm)* | 1 | Sized in Phase 6 |
 | ~~Battery divider~~ | — | 0 | **deliberately not fitted** — the INA219 supersedes it ([D-20](#15-decision-register)) |
 | I²C pull-ups | 4.7 kΩ ×4 | — | Needed on **both** buses; most BME280 breakouts include them |
@@ -574,7 +574,7 @@ sensor frame really is transmitted on FPort 1 (`lora_app.c`, `TxPayloadPort`).
  interval elapsed (default 15 min)
         │
         ▼
- sample every SELECTED sensor ──► pack 30-byte FPort-1 frame
+ sample every SELECTED sensor ──► pack 32-byte FPort-1 frame
         │                                  │
         │                                  ▼
         │                       post to mailbox, bump req_seq
@@ -939,14 +939,15 @@ dropped, so nothing arrives silently.
 
 ### 10.1 Uplink frame
 
-FPort 1, fixed 30 bytes, `fmt = 0x01`, little-endian. Normative:
-[PAYLOAD.md](PAYLOAD.md).
+FPort 1, fixed **32 bytes, `fmt = 0x02`**, little-endian. Normative:
+[PAYLOAD.md](PAYLOAD.md). *(fmt 0x01 = the 30-byte layout without battery
+current, retired r22 — same offsets 0–29.)*
 
 **Table 11 — Uplink frame layout**
 
 | Off | Field | Type | Scaling |
 |---:|---|---|---|
-| 0 | `fmt` | u8 | `0x01` |
+| 0 | `fmt` | u8 | `0x02` |
 | 1 | `status` | u8 | OK-bit per sensor, b7 = fault |
 | 2 | `batt_mV` | u16 | raw mV — always present |
 | 4 / 6 / 7 | `air1_temp` / `air1_rh` / `air1_press` | i16 / u8 / u16 | ×100 / ×2 / ×10 |
@@ -956,14 +957,18 @@ FPort 1, fixed 30 bytes, `fmt = 0x01`, little-endian. Normative:
 | 18 | `soil_temp` | i16 | ×100 |
 | 20 / 22 / 24 | `wind_speed` / `wind_dir` / `wind_gust` | u16 | ×100 / ×10 / ×100 |
 | 26 / 28 | `rain_tips` / `rain_mm` | u16 | raw / ×100 |
+| 30 | `batt_mA` | i16 | raw mA, **discharge positive** — always present; `0x7FFF` = no INA219 |
 
 A channel that is switched off, or that failed, sends a sentinel (`0x7FFF`
 signed, `0xFFFF` unsigned, `0xFF` for the u8 humidity) with its OK-bit clear, so
-the decoder can render "no data" rather than a misleading zero.
+the decoder can render "no data" rather than a misleading zero. The battery
+current has no status bit (the byte is full) — its own `0x7FFF` sentinel does
+that job.
 
-> **Planned change (not yet implemented):** `fmt` becomes `0x02` and a `node_id`
-> u16 is appended at offset 30, making the frame 32 bytes. All existing offsets
-> are unchanged. See [§14](#14-build-log) 2026-07-29 and [D-10](#15-decision-register).
+> **Planned change (not yet implemented):** a `node_id` u16 appended at offset
+> **32** (`fmt` → `0x03`), all existing offsets unchanged. It was originally
+> planned for offset 30 before the battery current took that slot (r22). See
+> [§14](#14-build-log) 2026-07-29 and [D-10](#15-decision-register).
 
 ### 10.2 Decoder
 
@@ -1023,11 +1028,11 @@ CONFIG : {T1,T2,1}
 BOOT   : no stored keys - using compiled-in default identity
 BOOT   : Nucleo ready
 ...
-ACK: uplink sent, 30 bytes on FPort 1
+ACK: uplink sent, 32 bytes on FPort 1
 DL: cmd 0x01 (2 args) -> applied            <- only if a downlink was queued
 SLEEP: STOP2 for 48s (console idle until wake)
 WAKE : after 48s (next uplink in 1500ms)
-ACK: uplink sent, 30 bytes on FPort 1
+ACK: uplink sent, 32 bytes on FPort 1
 ```
 
 > While `SLEEP:` is on screen the core is stopped and **the console ignores
@@ -1057,7 +1062,7 @@ harness is built.
 | 6 | `WS` | spin the anemometer at a known rate | speed tracks; check `ANEMO_MS_PER_HZ` |
 | 7 | `R` | tip the bucket 10× by hand | `rain_tips` = 10, `rain_mm` = 10 × `RAIN_MM_PER_TIP` |
 | 8 | battery | compare to a DMM | within ~1 % — else re-measure the divider resistors |
-| 9 | uplink | `nucleo uplink now` | `ACK: uplink sent, 30 bytes on FPort 1` and the frame appears in TTN |
+| 9 | uplink | `nucleo uplink now` | `ACK: uplink sent, 32 bytes on FPort 1` and the frame appears in TTN |
 | 10 | downlink | queue `{5}` in TTN | node echoes the new config on the console and the interval changes |
 | 11 | persistence | power-cycle the node completely | `info` still shows the keys and the configuration |
 
@@ -1412,6 +1417,42 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-17 — INA219 live; battery current always on-air; frame fmt 0x02 (r22)
+
+**The battery went from one number to two.** An INA219 is now fitted (high-side
+shunt in the battery line, on a Grove I²C socket = I²C2) and every uplink
+carries **bus voltage AND pack current**. First live reading:
+`batt : 4.084 V  +118 mA [discharging]`.
+
+**Frame change — `fmt` 0x01 → 0x02, 30 → 32 bytes** ([D-30](#15-decision-register)):
+`batt_mA` (i16, **discharge positive**, charging negative per
+`CHARGE_NEGATIVE_CURRENT_A`) at offset **30**. All existing offsets unchanged.
+The current is always-on like the voltage; since the status byte has no free
+bit, its "not measured" marker is its own `0x7FFF` sentinel — an absent INA219
+is distinguishable from a genuine 0 mA. The planned `node_id` moves to offset
+32 / fmt 0x03 (D-10 amended). Selftest packer vector extended and passing
+byte-exact; TTN decoder in PAYLOAD.md now accepts both fmts.
+
+**The battery is not the KoreroNet pack.** Constants in `pins_config.h` were
+rewritten for the real hardware: **two 3.7 V / 6600 mAh Li-ion cells in
+parallel** — 1S 2P, 13 200 mAh, 4.2 V full / 3.0 V empty. The inherited 4S
+LiFePO₄ thresholds (14.3/13.4/12.8/11.2 V) would never have triggered at 1S
+voltages ([D-31](#15-decision-register)).
+
+**Knock-on changes a replicator must know:**
+- **Flash-ring record layout changed** (frame 30→32 B inside the same 40-byte
+  record; pad 4→2). Old records fail their checksum and silently vanish from
+  `nucleo log dump` — the torn-write path handles the migration. Count restarts
+  at 0; no erase needed (but one doesn't hurt).
+- **CSV gained a `batt_mA` column** (after `batt_V`, blank when no INA219) in
+  both `nucleo log dump` and the SD file. A day file started under the old
+  header keeps the old header until midnight rotation.
+- **INA219 init now probes 0x45 then 0x40**, so an un-jumpered module works.
+  During bring-up the module was first plugged where the scan couldn't see it —
+  `nucleo i2c scan` shows what's actually on I²C2; the INA219 must be on a
+  Grove **I²C** socket (or D15/D14), never the I²C1 pins (A2 carries the
+  PT1000 divider).
 
 ### 2026-08-13 — Rain live at 0.2 mm/tip; wind path verified; watch.ps1 (r21)
 
@@ -1963,7 +2004,7 @@ If you built a node before this date, LW and SM are swapped relative to yours.
 | D-07 | Config and identity on **separate** flash pages | A page must be erased before rewrite; config changes often, identity must never be at risk from it | One shared page |
 | D-08 | MAX31865 one-shot with bias off between reads | Continuous conversion leaves VBIAS and the excitation current on, wasting power and self-heating the probe being measured | Auto-convert mode |
 | D-09 | Config string: all-or-nothing rejection | A half-applied configuration on a node you cannot reach is worse than a rejected one | Best-effort partial application |
-| D-10 | `u16 node_id`, UID-defaulted, in the identity page, on-air at offset 30 | Human-usable label + self-describing frames + interlock against mis-addressed downlinks; UID default means it is never unset or colliding | Relying only on TTN metadata (attribution lost once frames leave TTN); storing it in the config page (erased on every config change) |
+| D-10 | `u16 node_id`, UID-defaulted, in the identity page, on-air appended to the frame *(amended r22: at offset **32**, fmt 0x03 — battery current took offset 30)* | Human-usable label + self-describing frames + interlock against mis-addressed downlinks; UID default means it is never unset or colliding | Relying only on TTN metadata (attribution lost once frames leave TTN); storing it in the config page (erased on every config change) |
 | D-11 | 3-second gust buckets | Matches the WMO gust definition and cannot be spiked by a single bounced edge | "Shortest gap seen" — one bounce produced an absurd gust |
 | D-12 | Sleep in 8 s chunks rather than one long STOP2 | The IWDG runs in STOP2 and cannot be stopped, so one long nap would reset the node; chunking keeps watchdog cover *during* the sleep | Disabling the watchdog while asleep — trades a real hang-protection for nothing |
 | D-13 | Advance the HAL tick by the slept time on wake | Every deadline in this firmware is tick-based; without it the scheduler drifts by exactly the sleep duration each cycle | Converting every deadline to RTC time — a far larger change for the same result |
@@ -1983,6 +2024,8 @@ If you built a node before this date, LW and SM are swapped relative to yours.
 | D-27 | **MAX31865 dropped from this node**; `ST` stays in the SPEC *(ST since re-implemented by [D-29](#15-decision-register))* | No board fitted, none planned, and SPI1 is the SD card's now. Keeping `ST` valid kept the config grammar stable — which is exactly what let D-29 revive it as a divider with no SPEC change | Ripping `ST` out of the SPEC and payload — breaks frame compatibility for one absent sensor |
 | D-28 | 10HS excitation from the **switched rail**, mV conversion on-node, curve off-node | 12 mA is 3× the LWS — a GPIO would sag below the sensor's 3.0 V floor (D-19's logic, harder). The regulated output makes mV absolute, so the console prints mV, but the polynomial stays off-node where it can be refined without reflashing | Wiring to socket VCC (continuous ~12 mA ≈ 288 mAh/day); applying the cubic on-node (locks the calibration into the firmware) |
 | D-29 | PT1000 read through a **~900 Ω divider on A2**, ratiometric, pin muxed from I²C1 SDA per read | One resistor replaces the dropped MAX31865; top rail = ADC reference so the rail voltage cancels; the CVD math was already written. ~±0.3 °C quantisation is fine for soil. Cost accepted: `T2` unusable while the divider is fitted, and accuracy rides on measuring the series resistor (~0.26 °C/Ω) | Refit a MAX31865 (15-bit + lead compensation, but a chip, a bus and 4 wires for a soil probe); a dedicated free ADC pin (none left on the headers with LW/SM/WD/WS/batt placed) |
+| D-30 | **Battery current always on-air**: `fmt` 0x02, i16 mA at offset 30, own `0x7FFF` sentinel | Power is the one telemetry you cannot afford to lose remotely (D-20's logic extended to current); discharge-positive matches `CHARGE_NEGATIVE_CURRENT_A`. The status byte is full, so the sentinel does the "not measured" job — and 0 mA stays a real value | A status-byte redesign (breaks every decoder for one bit); putting current behind a config key (defeats "always") |
+| D-31 | Battery model = **1S Li-ion 2P (2× 6600 mAh)**: 4.2 V full / 3.0 V empty / 13 200 mAh | It is the pack actually fitted; the inherited 4S LiFePO₄ thresholds sit ~3× above 1S voltages and would never trigger | Keeping KoreroNet's constants (dead alarm thresholds); making the chemistry runtime-configurable (config surface for a value that changes with a soldering iron, not a downlink) |
 
 ---
 

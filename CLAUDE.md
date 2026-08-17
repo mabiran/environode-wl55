@@ -33,7 +33,8 @@ sensor-set config string in place of the timetable.
 - `docs/LOGBOOK.md` — **the living build logbook + replication manual.** Entry
   point for any reader; updated on every change (see Working rules).
 - `docs/PINOUT.md`  — sensor→peripheral map + GPIOs (**LOCKED**, hand-written init).
-- `docs/PAYLOAD.md` — uplink frame (FPort 1, 30 bytes) + downlink command table (FPort 10).
+- `docs/PAYLOAD.md` — uplink frame (FPort 1, 32 bytes, fmt 0x02 — batt mA at
+  offset 30 always on-air) + downlink command table (FPort 10).
 - `docs/CONFIG.md`  — the `{…}` sensor-set / interval config string (SPEC v1):
   grammar, keys, replace-vs-edit, all-or-nothing rejection, canonical rendering.
 - `docs/ARCHITECTURE.md`, `docs/ROADMAP.md`, `docs/SENSORS.md`.
@@ -65,7 +66,9 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
 - [x] Sensor drivers implemented: `bme280` (Bosch compensation, forced mode),
       `max31865` (PT1000, one-shot + bias off, CVD + sub-zero), `analog_sensors`,
       `pulse_counter` (debounce, atomic snapshot, 3 s gust buckets).
-- [x] CM4 app samples sensors, packs the 30-byte FPort-1 frame and uplinks on a
+- [x] CM4 app samples sensors, packs the 32-byte FPort-1 frame (fmt 0x02:
+      battery V **and** A from the INA219 on every frame; pack = 1S Li-ion 2P
+      13.2 Ah) and uplinks on a
       configurable interval (default 15 min); console: `info`, `nucleo sensors`,
       `nucleo uplink now`, `nucleo set {…}` / bare `{…}`, `nucleo interval <min>`,
       `nucleo reset rain`.

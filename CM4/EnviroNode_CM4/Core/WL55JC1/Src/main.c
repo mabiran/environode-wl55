@@ -13,7 +13,7 @@
  *    - CM4<->CM0+ mailbox: uplink queue, downlink drain, trace forward,
  *      OTAA key provisioning, persisted in backup registers AND flash
  *    - the EnviroNode sensor path: envnode_sensors_init() at boot, then
- *      periodic sample + 30-byte FPort-1 uplink (docs/PAYLOAD.md), plus
+ *      periodic sample + 32-byte FPort-1 uplink (docs/PAYLOAD.md), plus
  *      `info` / `nucleo sensors` / `nucleo uplink now` on the console
  *    - the sensor-set configuration string "{LW,T1,...,15}" (docs/CONFIG.md):
  *      one parser, two transports — a downlink on any FPort whose first
@@ -203,7 +203,7 @@ static sdlog_creds_t g_sd_creds;
 /* One CSV header + row formatter, shared by the console dump and the SD file so
    the two can never disagree about the format. */
 static const char ENVNODE_CSV_HEADER[] =
-    "timestamp,epoch2000,status,batt_V,air1_C,air1_RH,air1_hPa,"
+    "timestamp,epoch2000,status,batt_V,batt_mA,air1_C,air1_RH,air1_hPa,"
     "air2_C,air2_RH,air2_hPa,soil_raw,leaf_raw,soil_C,"
     "wind_ms,wind_dir,gust_ms,rain_tips,rain_mm\r\n";
 
@@ -1010,7 +1010,7 @@ static void EnvNode_PrintInfo(void)
            setstr, (unsigned)sel);
   UART1_Send(line);
 
-  snprintf(line, sizeof(line), "Uplink    : every %u min on FPort %u (30-byte frame)%s\r\n",
+  snprintf(line, sizeof(line), "Uplink    : every %u min on FPort %u (32-byte frame)%s\r\n",
            (unsigned)interval, (unsigned)ENVNODE_UPLINK_FPORT,
            (sel == SENSOR_NONE) ? " - PAUSED, set is {NONE}" : "");
   UART1_Send(line);
@@ -1079,12 +1079,20 @@ static void EnvNode_SampleAndPrint(void)
            (unsigned)r.rain_tips, r.rain_mm);
   UART1_Send(line);
 
-  snprintf(line, sizeof(line), "batt : %.2f V\r\nstatus: 0x%02X\r\n",
-           r.batt_v, (unsigned)r.status);
+  if (r.batt_i_ok) {
+    /* Discharge positive; charging shows negative (CHARGE_NEGATIVE_CURRENT_A). */
+    snprintf(line, sizeof(line), "batt : %.3f V  %+.0f mA [%s]\r\nstatus: 0x%02X\r\n",
+             r.batt_v, r.batt_i_a * 1000.0f,
+             (r.batt_i_a <= CHARGE_NEGATIVE_CURRENT_A) ? "charging" : "discharging",
+             (unsigned)r.status);
+  } else {
+    snprintf(line, sizeof(line), "batt : %.2f V  (no INA219)\r\nstatus: 0x%02X\r\n",
+             r.batt_v, (unsigned)r.status);
+  }
   UART1_Send(line);
 }
 
-/* `nucleo uplink now` — sample, pack the 30-byte FPort-1 frame (docs/PAYLOAD.md)
+/* `nucleo uplink now` — sample, pack the 32-byte FPort-1 frame (docs/PAYLOAD.md)
    and hand it to the radio core. Blocks until CM0+ acknowledges, feeding the
    watchdog so the bounded (<=12 s) wait is never mistaken for a hang. */
 static int EnvNode_UplinkNow(void)
@@ -1378,6 +1386,8 @@ static void EnvNode_FormatCsvRow(uint32_t ep, const uint8_t *f, char *line, size
                      (unsigned long)ep, (unsigned)st, (double)G16(2) / 1000.0);
 
     #define CAT(...) n += snprintf(line + n, sz - (size_t)n, __VA_ARGS__)
+    /* Battery current (off 30, fmt 0x02) — sentinel 0x7FFF = no INA219. */
+    if (GS16(30) != 0x7FFF) CAT("%d,", (int)GS16(30)); else CAT(",");
     if (st & SENS_OK_AIR1) CAT("%.2f,%.1f,%.1f,", GS16(4) / 100.0, f[6] / 2.0, G16(7) / 10.0);
     else                   CAT(",,,");
     if (st & SENS_OK_AIR2) CAT("%.2f,%.1f,%.1f,", GS16(9) / 100.0, f[11] / 2.0, G16(12) / 10.0);
@@ -1509,12 +1519,13 @@ static void EnvNode_SelfTest(void)
     r.air1_temp_c = 21.50f; r.air1_rh_pct = 55.0f; r.air1_press_hpa = 1013.2f;
     r.air2_temp_c = -5.25f; r.air2_rh_pct = 80.0f; r.air2_press_hpa =  998.7f;
     r.batt_v      = 3.700f;
+    r.batt_i_a    = 0.235f;  r.batt_i_ok = 1u;   /* 235 mA discharging       */
     r.status      = (uint8_t)(SENS_OK_AIR1 | SENS_OK_AIR2);
 
     size_t n = envnode_payload_pack(&r, frame, sizeof(frame));
 
     static const uint8_t expect[ENVNODE_UPLINK_LEN] = {
-      0x01,                   /* fmt                                         */
+      0x02,                   /* fmt (0x02 = 32 B, batt current at off 30)   */
       0x03,                   /* status: AIR1|AIR2 ok                        */
       0x74, 0x0E,             /* batt 3700 mV                                */
       0x66, 0x08,             /* air1 temp  2150 = 21.50 C                   */
@@ -1531,6 +1542,7 @@ static void EnvNode_SelfTest(void)
       0xFF, 0xFF,             /* wind gust                                   */
       0xFF, 0xFF,             /* rain tips                                   */
       0xFF, 0xFF,             /* rain mm                                     */
+      0xEB, 0x00,             /* batt current +235 mA (discharge positive)   */
     };
 
     int ok = (n == ENVNODE_UPLINK_LEN) && (memcmp(frame, expect, ENVNODE_UPLINK_LEN) == 0);
@@ -2127,7 +2139,7 @@ static void Print_MessageSyntax(void)
     "-- Node / sensors --\r\n",
     "info                   (identity, sensor set, sleep verdict, inventory)\r\n",
     "nucleo sensors         (sample every sensor and print it)\r\n",
-    "nucleo uplink now      (sample + send the 30-byte frame on FPort 1)\r\n",
+    "nucleo uplink now      (sample + send the 32-byte frame on FPort 1)\r\n",
     "nucleo interval <min>  (uplink period, 1..999, persisted in flash)\r\n",
     "nucleo reset rain      (zero the rain-tip accumulator)\r\n",
     "nucleo selftest        (parser + packer + I2C scan + live read; no gateway)\r\n",
@@ -2248,7 +2260,7 @@ static void Console_HandleLine(const char *line_in) {
   /* --- EnviroNode sensors ---------------------------------------------------
        info / nucleo info      -> identity (DevEUI + AppKey) + sensor inventory
        nucleo sensors          -> sample every sensor and print it
-       nucleo uplink now       -> sample, pack the 30-byte frame, send on FPort 1
+       nucleo uplink now       -> sample, pack the 32-byte frame, send on FPort 1
        nucleo reset rain       -> zero the rain-tip accumulator                */
   if (strcmp(cmd, "info") == 0 || strstr(cmd, "nucleoinfo")) {
     EnvNode_PrintInfo();

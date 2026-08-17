@@ -66,7 +66,7 @@ Default 15. Outside that range the whole frame is rejected (see below).
 2. Every **selected** sensor is read. A **deselected** sensor is skipped entirely:
    its OK-bit stays clear and it raises **no** fault, because nothing is broken.
 3. Battery is read unconditionally.
-4. The 30-byte FPort-1 frame is packed (sentinels for skipped/failed channels) and
+4. The 32-byte FPort-1 frame is packed (sentinels for skipped/failed channels) and
    handed to the CM0+ radio core.
 5. Downlinks are drained and applied.
 6. Rain/wind accumulators are **consumed** by the sample that feeds the uplink.
@@ -111,7 +111,7 @@ print, so the string you read back can be pasted straight into another node.
 
 ## Effect on the uplink
 
-**The 30-byte FPort-1 frame layout never changes** — offsets are fixed whatever
+**The 32-byte FPort-1 frame layout never changes** — offsets are fixed whatever
 the sensor set. A deselected sensor sends its sentinel (`0x7FFF` for i16,
 `0xFFFF` for u16, `0xFF` for u8) with its OK-bit clear, so the TTN decoder in
 [PAYLOAD.md](PAYLOAD.md) renders "no data" rather than a plausible-looking zero.

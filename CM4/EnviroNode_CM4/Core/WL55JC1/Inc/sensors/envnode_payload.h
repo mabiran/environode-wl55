@@ -30,7 +30,9 @@
   *             24  wind_gust    u16   x100 m/s   SENS_OK_WIND
   *             26  rain_tips    u16   raw        SENS_OK_RAIN
   *             28  rain_mm      u16   x100 mm    SENS_OK_RAIN
-  *                                    (total = 30 bytes)
+  *             30  batt_i       i16   mA, discharge positive — always sent
+  *                                    (sentinel 0x7FFF when no INA219)
+  *                                    (total = 32 bytes, fmt 0x02)
   ******************************************************************************
   * @attention
   *   Ground truth: docs/PAYLOAD.md. Do not change offsets/scalings here without
@@ -55,8 +57,10 @@ extern "C" {
 
 #define ENVNODE_UPLINK_FPORT    (1u)     /*!< FPort for the sensor frame.      */
 #define ENVNODE_DOWNLINK_FPORT  (10u)    /*!< FPort for config/commands.       */
-#define ENVNODE_FMT_UPLINK      (0x01u)  /*!< Uplink frame-format id (byte 0). */
-#define ENVNODE_UPLINK_LEN      (30u)    /*!< Fixed uplink frame size (bytes). */
+#define ENVNODE_FMT_UPLINK      (0x02u)  /*!< Uplink frame-format id (byte 0).
+                                              0x01 = 30 B, no battery current;
+                                              0x02 = 32 B, i16 batt mA @30.    */
+#define ENVNODE_UPLINK_LEN      (32u)    /*!< Fixed uplink frame size (bytes). */
 
 /**
  * @name Not-OK sentinels (docs/PAYLOAD.md)

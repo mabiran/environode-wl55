@@ -83,8 +83,11 @@ env_status_t envnode_sensors_init(void)
   pulse_counter_init();
   s_present |= PRESENT_PULSE;
 
-  /* Battery monitor — optional; the ADC divider is the fallback. */
-  if (INA219_Init(&s_ina, &hi2c2, INA219_I2C_ADDR_7B, SHUNT_OHMS)) s_present |= PRESENT_INA219;
+  /* Battery monitor — optional; the ADC divider is the fallback. Probe the
+     project address first (0x45 = both jumpers bridged), then the factory
+     default 0x40, so an un-jumpered module still comes up. */
+  if      (INA219_Init(&s_ina, &hi2c2, INA219_I2C_ADDR_7B, SHUNT_OHMS)) s_present |= PRESENT_INA219;
+  else if (INA219_Init(&s_ina, &hi2c2, 0x40u,              SHUNT_OHMS)) s_present |= PRESENT_INA219;
 
   return rc;
 }
@@ -195,11 +198,16 @@ static env_status_t envnode_sample_common(sensor_readings_t *out, int consume_pu
     }
   }
 
-  /* --- battery: prefer the INA219 bus voltage over the divider --- */
+  /* --- battery: prefer the INA219 bus voltage over the divider, and take the
+     pack current from its shunt (discharge positive, charging negative per
+     CHARGE_NEGATIVE_CURRENT_A). Both ride in every frame; batt_i_ok gates the
+     current's sentinel so an absent INA219 is distinguishable from 0 A. --- */
   if (s_present & PRESENT_INA219) {
-    float v_bus = 0.0f;
-    if (INA219_ReadBusVoltage_V(&s_ina, &v_bus) && v_bus > 0.5f) {
-      out->batt_v = v_bus;
+    float v_bus = 0.0f, i_a = 0.0f;
+    if (INA219_ReadVI(&s_ina, &v_bus, &i_a)) {
+      if (v_bus > 0.5f) out->batt_v = v_bus;
+      out->batt_i_a  = i_a;
+      out->batt_i_ok = 1u;
     }
   }
 
