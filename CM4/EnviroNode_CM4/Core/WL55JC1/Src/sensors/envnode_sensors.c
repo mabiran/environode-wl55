@@ -97,6 +97,14 @@ uint8_t envnode_sensors_present(void)
   return s_present;
 }
 
+/* 7-bit address the INA219 actually answered at during init (0x45 or 0x40),
+   0 when none was found — lets the legacy power-stats path in main.c talk to
+   the same chip instead of a hardcoded address. */
+uint8_t envnode_sensors_ina_addr(void)
+{
+  return (s_present & PRESENT_INA219) ? s_ina.addr_7b : 0u;
+}
+
 /* Calibration offsets arrive as engineering units x100 (docs/PAYLOAD.md 0x04). */
 static inline float cal_f(uint8_t sensor_id) { return (float)envnode_config_get_cal(sensor_id) / 100.0f; }
 
@@ -204,7 +212,17 @@ static env_status_t envnode_sample_common(sensor_readings_t *out, int consume_pu
      current's sentinel so an absent INA219 is distinguishable from 0 A. --- */
   if (s_present & PRESENT_INA219) {
     float v_bus = 0.0f, i_a = 0.0f;
-    if (INA219_ReadVI(&s_ina, &v_bus, &i_a)) {
+    int got = INA219_ReadVI(&s_ina, &v_bus, &i_a);
+    if (!got) {
+      /* I2C2 wedges on this bench (BUSY-flag lockup from a marginal socket
+         contact — LOGBOOK r23): every device on the bus goes silent until the
+         peripheral is reset. Recover once and retry before reporting the
+         sentinel; battery runs every cycle, so this also heals the bus for
+         the BME280 sharing it. */
+      (void)I2C2_BusRecover();
+      got = INA219_ReadVI(&s_ina, &v_bus, &i_a);
+    }
+    if (got) {
       if (v_bus > 0.5f) out->batt_v = v_bus;
       out->batt_i_a  = i_a;
       out->batt_i_ok = 1u;

@@ -28,9 +28,17 @@ I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c2;
 
 /* Fast-mode (400 kHz) TIMINGR for PCLK1 = 16 MHz (HSI, AHB/APB1 div 1).
-   PRESC=0 SCLDEL=0 SDADEL=1 SCLH=13 SCLL=20 -> ~400 kHz. Both buses run from
-   PCLK1 at the same frequency, so they share the value. */
+   PRESC=0 SCLDEL=0 SDADEL=1 SCLH=13 SCLL=20 -> ~400 kHz. */
 #define ENVNODE_I2C_TIMING_400K   (0x00100D14u)
+
+/* Standard-mode (100 kHz) TIMINGR for the same 16 MHz kernel clock — ST's
+   canonical value (PRESC=3, SCLDEL=4, SDADEL=2, SCLH=0x0F, SCLL=0x13).
+   I2C2 runs at this since r23: its wiring proved marginal enough to wedge the
+   peripheral repeatedly at 400 kHz (BUSY lockups — see I2C2_BusRecover), and
+   4× more timing slack is the difference between every-other-read failing and
+   a solid bus. Nothing on I2C2 needs speed: the INA219 and BME280 exchange a
+   few bytes per cycle. */
+#define ENVNODE_I2C_TIMING_100K   (0x30420F13u)
 
 /* I2C1 init function — EnviroNode BME280 #2 on the board pins (PA9/PA10). */
 void MX_I2C1_Init(void)
@@ -76,7 +84,7 @@ void MX_I2C2_Init(void)
 
   /* USER CODE END I2C2_Init 1 */
   hi2c2.Instance = I2C2;
-  hi2c2.Init.Timing = 0x00100D14;
+  hi2c2.Init.Timing = ENVNODE_I2C_TIMING_100K;   /* slowed from 400 k, r23 */
   hi2c2.Init.OwnAddress1 = 0;
   hi2c2.Init.AddressingMode = I2C_ADDRESSINGMODE_7BIT;
   hi2c2.Init.DualAddressMode = I2C_DUALADDRESS_DISABLE;
@@ -172,6 +180,57 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef* i2cHandle)
 
   /* USER CODE END I2C2_MspInit 1 */
   }
+}
+
+/**
+ * @brief  Unwedge I2C2 (PA12 SCL / PA11 SDA) and re-initialise the peripheral.
+ *
+ * The classic STM32 I2C lockup: a glitch on a marginal SDA/SCL contact makes
+ * the peripheral latch its BUSY flag (it believes another master owns the
+ * bus), after which every transfer times out until the peripheral is reset —
+ * the whole bus appears empty even though the slaves are fine. Seen live on
+ * this bench (LOGBOOK r23): the INA219 answered at boot, wedged minutes
+ * later, and a core reset revived it — the signature of a peripheral-side,
+ * not slave-side, hang.
+ *
+ * Recovery: drop the peripheral, drive the pins manually — up to 9 SCL
+ * clocks releases a slave stuck mid-byte, then a STOP condition — and bring
+ * the peripheral back up. Cheap (<25 ms), safe to call on a healthy bus.
+ *
+ * @retval 1 if SDA reads high (bus free) after recovery, 0 if still stuck
+ *         (genuinely shorted SDA — a hardware problem no clocking fixes).
+ */
+int I2C2_BusRecover(void)
+{
+  GPIO_InitTypeDef g = {0};
+
+  (void)HAL_I2C_DeInit(&hi2c2);
+
+  /* Manual open-drain control of both lines, released (high) first. */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12 | GPIO_PIN_11, GPIO_PIN_SET);
+  g.Pin   = GPIO_PIN_12 | GPIO_PIN_11;
+  g.Mode  = GPIO_MODE_OUTPUT_OD;
+  g.Pull  = GPIO_NOPULL;              /* the modules carry the pull-ups      */
+  g.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOA, &g);
+  HAL_Delay(1);
+
+  /* Clock SCL until a slave stuck mid-byte lets go of SDA (max 9 bits). */
+  for (int i = 0; i < 9 && HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_11) == GPIO_PIN_RESET; ++i) {
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_RESET); HAL_Delay(1);
+    HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_SET);   HAL_Delay(1);
+  }
+
+  /* STOP condition: SDA low -> high while SCL is high. */
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_RESET); HAL_Delay(1);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_12, GPIO_PIN_SET);   HAL_Delay(1);
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_11, GPIO_PIN_SET);   HAL_Delay(1);
+
+  int sda_free = (HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_11) == GPIO_PIN_SET);
+
+  /* Back to the peripheral: MX init re-runs the Msp GPIO/clock config. */
+  MX_I2C2_Init();
+  return sda_free;
 }
 
 void HAL_I2C_MspDeInit(I2C_HandleTypeDef* i2cHandle)

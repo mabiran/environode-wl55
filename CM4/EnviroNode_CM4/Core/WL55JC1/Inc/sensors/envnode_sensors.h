@@ -142,6 +142,9 @@ env_status_t envnode_sensors_peek(sensor_readings_t *out);
  */
 uint8_t envnode_sensors_present(void);
 
+/** 7-bit address the INA219 answered at during init (0x45/0x40), 0 if absent. */
+uint8_t envnode_sensors_ina_addr(void);
+
 #ifdef __cplusplus
 }
 #endif

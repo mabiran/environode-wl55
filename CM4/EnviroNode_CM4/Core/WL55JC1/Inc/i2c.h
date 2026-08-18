@@ -48,6 +48,10 @@ void MX_I2C2_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 
+/** Unwedge a BUSY-latched I2C2 (9 SCL clocks + STOP, then re-init) and report
+ *  whether SDA reads free. Cheap and safe on a healthy bus — see i2c.c. */
+int I2C2_BusRecover(void);
+
 /* USER CODE END Prototypes */
 
 #ifdef __cplusplus

@@ -12,11 +12,11 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r22 — 2026-08-17 |
+| **Revision** | r23 — 2026-08-17 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
-| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS**, **PT1000 divider**, **rain (0.2 mm/tip)**, **INA219 (4.08 V / +118 mA)**, flash ring and **SD CSV logging** all verified on the board. BME280s answer intermittently (I²C contact); wind cups/vane motion test and gateway join still pending. See [§14](#14-build-log) r18–r22 |
+| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS**, **PT1000 divider**, **rain (0.2 mm/tip)**, **INA219 (4.07 V / +119 mA / SoC 86 %, self-healing bus)**, flash ring and **SD CSV logging** all verified on the board. Wind cups/vane motion test and gateway join still pending; SD needs a card re-check (mounts raw, FatFs remount failing). See [§14](#14-build-log) r18–r23 |
 | **Repository** | `Hardware/EnviroNode-WL55` (private) |
 
 ---
@@ -344,7 +344,7 @@ Arduino label the silkscreen prints.
 | # | Part | Address | Fits where |
 |---|---|---|---|
 | U1 | BME280 #1 → `T1` | 0x76 **or** 0x77 | any Grove **I²C** socket |
-| U2 | **INA219** battery monitor | **0x45** = bridge **both** A0 and A1 jumpers | a second Grove **I²C** socket |
+| U2 | **INA219** battery monitor | **0x40** (no jumpers, as fitted) — firmware probes 0x45 then 0x40, so either strap works | a second Grove **I²C** socket |
 
 **INA219 wiring — it is a high-side current sensor, so the shunt goes in the battery line:**
 
@@ -1418,6 +1418,39 @@ good argument for documenting mechanisms rather than asserting them.
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
 
+### 2026-08-17 — I²C2 self-healing, 100 kHz; power stats fixed; flash.ps1 builds by default (r23)
+
+**The INA219 "worked then vanished" — three real causes and one embarrassing one.**
+
+1. **I²C2 BUSY-flag lockup.** The classic STM32 failure: a glitch on a marginal
+   SDA/SCL contact makes the peripheral believe another master owns the bus; it
+   latches BUSY and every transfer times out — the whole bus scans empty even
+   though the slaves are fine (this also retroactively explains the "BME280s
+   answer intermittently" mystery: same bus, same wedge). New
+   `I2C2_BusRecover()` (i2c.c): de-init, manually clock SCL up to 9× to free a
+   slave stuck mid-byte, issue a STOP, re-init — called automatically when the
+   per-cycle battery read fails, and before every `nucleo i2c scan` so a wedge
+   can never masquerade as a wiring fault again ([D-32](#15-decision-register)).
+2. **400 kHz was too fast for this wiring.** I²C2 now runs **100 kHz standard
+   mode** (`ENVNODE_I2C_TIMING_100K` = ST's canonical `0x30420F13` for the
+   16 MHz kernel clock). Nothing on the bus needs speed; 4× timing slack turned
+   an every-other-read failure into 5/5 clean reads.
+3. **`nucleo power stats` used its own hardcoded address (0x45).** The fitted
+   module is strapped **0x40**; the KoreroNet-era `i2c_read_reg()` never
+   followed the driver's probe. It now asks `envnode_sensors_ina_addr()` for
+   the address init actually found. Two knock-ons fixed with it: the
+   **coulomb-counter seed ran before sensor init** (seeded from 0 V → "used
+   13200/13200 mAh"), now moved after; and **`soc_from_voltage()` still held
+   the 4S LiFePO₄ map** whose lowest point sits ~3× above 1S voltages —
+   replaced with a 1S Li-ion resting curve (4.20 V = 100 % … 3.30 V = 0 %).
+   Verified: `Vsrc[INA]=4.07 V | I=+0.12 A | SoC_i=86 % | SoC_v=86 %`.
+4. **The embarrassing one: `flash.ps1` without `-Build` flashed the existing
+   ELF.** Half the day's "failures" were a stale image — the recovery, timing
+   and address fixes were on disk but never on the board. `flash.ps1` now
+   **builds by default** (`-NoBuild` restores the old behavior). If behavior
+   ever contradicts the source you are reading, check what was actually
+   flashed before theorising.
+
 ### 2026-08-17 — INA219 live; battery current always on-air; frame fmt 0x02 (r22)
 
 **The battery went from one number to two.** An INA219 is now fitted (high-side
@@ -2026,6 +2059,7 @@ If you built a node before this date, LW and SM are swapped relative to yours.
 | D-29 | PT1000 read through a **~900 Ω divider on A2**, ratiometric, pin muxed from I²C1 SDA per read | One resistor replaces the dropped MAX31865; top rail = ADC reference so the rail voltage cancels; the CVD math was already written. ~±0.3 °C quantisation is fine for soil. Cost accepted: `T2` unusable while the divider is fitted, and accuracy rides on measuring the series resistor (~0.26 °C/Ω) | Refit a MAX31865 (15-bit + lead compensation, but a chip, a bus and 4 wires for a soil probe); a dedicated free ADC pin (none left on the headers with LW/SM/WD/WS/batt placed) |
 | D-30 | **Battery current always on-air**: `fmt` 0x02, i16 mA at offset 30, own `0x7FFF` sentinel | Power is the one telemetry you cannot afford to lose remotely (D-20's logic extended to current); discharge-positive matches `CHARGE_NEGATIVE_CURRENT_A`. The status byte is full, so the sentinel does the "not measured" job — and 0 mA stays a real value | A status-byte redesign (breaks every decoder for one bit); putting current behind a config key (defeats "always") |
 | D-31 | Battery model = **1S Li-ion 2P (2× 6600 mAh)**: 4.2 V full / 3.0 V empty / 13 200 mAh | It is the pack actually fitted; the inherited 4S LiFePO₄ thresholds sit ~3× above 1S voltages and would never trigger | Keeping KoreroNet's constants (dead alarm thresholds); making the chemistry runtime-configurable (config surface for a value that changes with a soldering iron, not a downlink) |
+| D-32 | **I²C2 at 100 kHz + automatic bus recovery** (unwedge on failed battery read, and before every scan) | The bench wiring wedges the peripheral's BUSY flag at 400 kHz (glitches on marginal contacts); 100 kHz gives 4× timing slack and the recovery makes a residual wedge self-healing instead of a until-next-reboot outage. Nothing on I²C2 needs fast mode | Staying at 400 kHz and reseating wiring (right long-term, but the node should survive marginal copper in the field); recovering on a timer (fires blind — failure-triggered recovery runs exactly when needed) |
 
 ---
 

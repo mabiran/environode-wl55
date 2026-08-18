@@ -153,12 +153,15 @@
 /* USER CODE BEGIN PM */
 static float soc_from_voltage(float vbat) {
   /*
-   * Revised LiFePO₄ 4S voltage map.
+   * 1S Li-ion resting-voltage map (the fitted pack: 2 x 3.7 V / 6600 mAh in
+   * parallel — parallel keeps cell voltage, LOGBOOK r22/r23; replaced the
+   * inherited 4S LiFePO4 map whose lowest point sat ~3x above 1S voltages,
+   * pinning SoC_v at 0 %). Resting values — under load it reads pessimistic.
    */
   typedef struct { float v, p; } vp_t;
   static const vp_t map[] = {
-    {14.27f, 100.0f}, {14.00f, 95.0f}, {13.80f, 90.0f}, {13.60f, 75.0f},
-    {13.20f, 55.0f},  {12.80f, 30.0f}, {12.40f, 10.0f}, {12.00f,  0.0f}
+    {4.20f, 100.0f}, {4.10f, 90.0f}, {4.00f, 78.0f}, {3.90f, 62.0f},
+    {3.80f, 45.0f},  {3.70f, 28.0f}, {3.60f, 12.0f}, {3.30f,  0.0f}
   };
   if (vbat >= map[0].v) return 100.0f;
   for (size_t i = 1; i < sizeof(map)/sizeof(map[0]); ++i) {
@@ -443,21 +446,11 @@ int main(void)
   BspCOMInit.HwFlowCtl  = COM_HWCONTROL_NONE;
 
   /* USER CODE BEGIN BSP */
-  /* Configure INA219 (short timeout) */
-  uint8_t ina_cfg[3] = { INA_REG_CONFIG, 0x39, 0x9F }; /* 32V, ±320mV, 12b, cont */
-  (void)HAL_I2C_Master_Transmit(&hi2c2, INA219_ADDR, ina_cfg, 3, 10);
-
-  /* Seed the coulomb counter from the INA219 bus voltage on cold boot. The
-     INA219 is the primary battery source (the A4/PB14 divider is only a
-     fallback and may be unpopulated), so the seed comes from the bus voltage. */
-  HAL_Delay(10);                       /* let the INA219 finish a conversion */
-  PowerStats_t ps_boot;
-  ReadPowerStats(&ps_boot);
-  float v_bat_boot = ps_boot.bus_ok ? ps_boot.v_bus : ps_boot.v_src;
-  float soc_v_boot = soc_from_voltage(v_bat_boot);
-  float used_mAh_guess = (1.0f - (soc_v_boot / 100.0f)) * BATTERY_NOMINAL_mAh;
-  if (used_mAh_guess < 0.0f) used_mAh_guess = 0.0f;
-  BatteryFlow_Reset(used_mAh_guess);
+  /* (The legacy pre-init INA219 config write was removed here: it talked to a
+     hardcoded address before the driver had probed the real one, so it NACKed
+     into the void. INA219_Init — inside envnode_sensors_init below — writes
+     the same configuration to the address the chip actually answers at, and
+     the coulomb-counter seed moved after it for the same reason.) */
 
   /* --- EnviroNode sensor subsystem -----------------------------------------
      Brings up both BME280s, the MAX31865 RTD front-end, the analog block and
@@ -481,6 +474,19 @@ int main(void)
       UART1_Send(lm); UART1_Send("\r\n");
     }
     env_status_t src = envnode_sensors_init();
+
+    /* Seed the coulomb counter from the INA219 bus voltage — must run after
+       envnode_sensors_init() so ReadPowerStats talks to the address the probe
+       actually found (0x40 on the fitted module, not the configured 0x45). */
+    {
+      PowerStats_t ps_boot;
+      ReadPowerStats(&ps_boot);
+      float v_bat_boot = ps_boot.bus_ok ? ps_boot.v_bus : ps_boot.v_src;
+      float soc_v_boot = soc_from_voltage(v_bat_boot);
+      float used_mAh_guess = (1.0f - (soc_v_boot / 100.0f)) * BATTERY_NOMINAL_mAh;
+      if (used_mAh_guess < 0.0f) used_mAh_guess = 0.0f;
+      BatteryFlow_Reset(used_mAh_guess);
+    }
     analog_set_winddir_offset((float)envnode_config_get_winddir_offset_deg10() / 10.0f);
     uint8_t present  = envnode_sensors_present();
     char m[112];
@@ -1774,8 +1780,13 @@ static int parse_hex_bytes(const char *s, uint8_t *out, int nbytes)
 /* --- I2C utility with short timeouts --- */
 static int i2c_read_reg(uint8_t reg, uint8_t *buf, uint32_t len) {
   const uint32_t TO = 10; // ms
-  if (HAL_I2C_Master_Transmit(&hi2c2, INA219_ADDR, &reg, 1, TO) != HAL_OK) return 0;
-  if (HAL_I2C_Master_Receive (&hi2c2, INA219_ADDR, buf, len, TO)   != HAL_OK) return 0;
+  /* Talk to the INA219 at whatever address init actually found it on (the
+     fitted module is strapped 0x40, not the 0x45 the KoreroNet path assumed —
+     LOGBOOK r23); fall back to the configured default if init saw nothing. */
+  uint8_t a7 = envnode_sensors_ina_addr();
+  const uint16_t addr = a7 ? (uint16_t)(a7 << 1) : INA219_ADDR;
+  if (HAL_I2C_Master_Transmit(&hi2c2, addr, &reg, 1, TO) != HAL_OK) return 0;
+  if (HAL_I2C_Master_Receive (&hi2c2, addr, buf, len, TO)   != HAL_OK) return 0;
   return 1;
 }
 
@@ -2526,7 +2537,10 @@ static void Console_HandleLine(const char *line_in) {
 
   /* I2C2 bus scan — confirm the INA219 (and any Grove I2C device) address. */
   if (strstr(cmd, "nucleoi2cscan")) {
-    UART1_Send("ACK: I2C2 scan (7-bit addrs)...\r\n");
+    /* Recover first: a BUSY-wedged peripheral scans as an empty bus, which
+       sends people hunting wiring faults that do not exist (LOGBOOK r23). */
+    UART1_Send(I2C2_BusRecover() ? "ACK: I2C2 scan (7-bit addrs)...\r\n"
+                                 : "WARN: SDA stuck low (hardware) - scanning anyway...\r\n");
     uint8_t found = 0;
     for (uint8_t a = 1; a < 128; a++) {
       if (HAL_I2C_IsDeviceReady(&hi2c2, (uint16_t)(a << 1), 2, 5) == HAL_OK) {

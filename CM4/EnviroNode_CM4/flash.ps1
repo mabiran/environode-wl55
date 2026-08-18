@@ -5,11 +5,16 @@
 # The ELF files carry their own load addresses, so no -a offset is needed.
 #
 # Usage:
-#   .\flash.ps1                 # flash the existing Debug builds of both cores
-#   .\flash.ps1 -Build          # rebuild both first, then flash
-#   .\flash.ps1 -Core cm4 -Build  # build+flash only CM4 (cm0 | cm4 | both)
-#   .\flash.ps1 -Config Release -Build
+#   .\flash.ps1                 # build both cores, then flash (the default)
+#   .\flash.ps1 -NoBuild        # flash the existing ELFs without rebuilding
+#   .\flash.ps1 -Core cm4       # build+flash only CM4 (cm0 | cm4 | both)
+#   .\flash.ps1 -Config Release
 #   .\flash.ps1 -Build -NoFlash # build only (e.g. no board connected)
+#
+# ⚠️ Building is the DEFAULT since r23. It used to require -Build, and a bare
+# invocation silently flashed whatever stale ELF was lying around — which cost
+# a half-day chasing "bugs" that were already fixed in source (LOGBOOK r23).
+# -Build is still accepted (now redundant); -NoBuild restores the old behavior.
 
 param(
     [ValidateSet('Debug', 'Release')]
@@ -17,6 +22,7 @@ param(
     [ValidateSet('both', 'cm4', 'cm0')]
     [string]$Core = 'both',
     [switch]$Build,
+    [switch]$NoBuild,
     [switch]$NoFlash
 )
 
@@ -51,7 +57,7 @@ function Build-Core([string]$name, [string]$dir) {
     if ($LASTEXITCODE -ne 0) { throw "$name build failed." }
 }
 
-if ($Build) {
+if (-not $NoBuild) {
     if ($Core -ne 'cm4') { Build-Core 'CM0+' $cm0Dir }
     if ($Core -ne 'cm0') { Build-Core 'CM4'  $cm4Dir }
 }
