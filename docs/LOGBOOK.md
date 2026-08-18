@@ -12,16 +12,42 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r25 — 2026-08-18 |
+| **Revision** | r27 — 2026-08-18 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
-| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS**, **PT1000 divider**, **rain (0.2 mm/tip)**, **INA219 (4.07 V / +119 mA / SoC 86 %, self-healing bus)**, flash ring and **SD CSV logging** all verified on the board. Wind cups/vane motion test and gateway join still pending; SD needs a card re-check (mounts raw, FatFs remount failing). See [§14](#14-build-log) r18–r23 |
+| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS**, **PT1000 divider**, **rain (0.2 mm/tip)**, **INA219 (4.07 V / +119 mA / SoC 86 %, self-healing bus)**, flash ring, **SD CSV logging** and on-node **`sd format`** all verified on the board. Wind cups/vane motion test and gateway join still pending. See [§14](#14-build-log) r18–r27 |
 | **Repository** | `Hardware/EnviroNode-WL55` (private) |
 
 ---
 
 ## 0. Using this document
+
+### 0.0 Quick start — first fifteen minutes with the node
+
+1. **Plug in the USB** (ST-LINK) → a COM port appears. Open it at **115200
+   8N1**, or run **`.\watch.ps1`** from the repo root for a self-refreshing
+   sensor dashboard.
+2. **Press B1** — the node sleeps most of the time and ignores the console
+   until you do (B2 returns it to the normal schedule; forgetting B2 drains
+   batteries). The D6 status LED tells the same story ([Table 9a](#91-console-reference)):
+   dark = asleep, flashing = awake, solid = booting.
+3. `info` — identity, configuration, join state, which drivers came up.
+4. `nucleo sensors` — read every channel now; `[ok]`/`[FAIL]` per line shows
+   what is wired and working.
+5. `nucleo time is DD/MM/YYYY HH:MM:SS` — the RTC loses time on a full power
+   cut (no coin cell yet); timestamps are wrong until this is done.
+6. Configure with one line: `{SM,ST,R,15}` — the sensor set and the interval,
+   persisted in flash ([§9.2](#92-sensor-set-configuration-string)).
+   **The 1-minute factory interval is a bench setting — use ≥15 min in the
+   field** (TTN fair use).
+7. Data comes out three identical ways: the radio (TTN), `nucleo log dump`
+   (last 153 readings, CSV), and the SD card's daily `YYYYMMDD.CSV`.
+8. To build and flash after a firmware change: `.\flash.ps1` from
+   `CM4/EnviroNode_CM4/` (it builds by default; keep the console closed —
+   one program per COM port).
+9. Something wrong? `nucleo selftest`, then [§12 Troubleshooting](#12-troubleshooting).
+   Wire in the wrong hole? `nucleo cshunt` finds pulled-up wires electrically.
 
 ### 0.1 Reading order
 
@@ -200,7 +226,7 @@ audio, no Pi, and no recording timetable. See [D-01](#15-decision-register).
 | Shield | **Seeed Grove Base Shield V2** | 1 | Provides Grove sockets on the Arduino headers |
 | ~~RTD front-end~~ | ~~**MAX31865 breakout**~~ | 0 | **dropped from this node (r18, [D-27](#15-decision-register))**; if a future node fits one, Rref must be 4.02 kΩ ([D-05](#15-decision-register)) |
 | SD logger | 3.3 V-native SD breakout + **FAT32 card ≤32 GB** | 1 | SPI1, CS **D5/PB8**; 10 kΩ CS pull-up, 100 nF+10 µF at the socket ([§12A](#12a-future-functionality--sd-card-mass-logging)) |
-| Battery monitor | **INA219** breakout, addr `0x45` | 1 | On the shield I²C bus; 0.1 Ω shunt |
+| Battery monitor | **INA219** breakout — `0x40` or `0x45`, firmware probes both | 1 | On the shield I²C bus; 0.1 Ω shunt; first node fitted un-jumpered at `0x40` |
 | Battery | **Li-ion 1S 2P** — 2 × 3.7 V / 6600 mAh in parallel = 13 200 mAh | 1 | `pins_config.h` thresholds: 4.2 V full / 3.0 V empty (r22; was spec'd 4S LiFePO₄) |
 | Solar + charger | *(confirm)* | 1 | Sized in Phase 6 |
 | ~~Battery divider~~ | — | 0 | **deliberately not fitted** — the INA219 supersedes it ([D-20](#15-decision-register)) |
@@ -219,7 +245,7 @@ audio, no Pi, and no recording timetable. See [D-01](#15-decision-register).
 | Soil temperature | **PT1000** RTD probe, 2-wire + **~900 Ω series resistor** (measure it!) | analog divider into **A2** | `ANALOG_RTD_SERIES_OHMS` = the measured resistor (MAX31865 dropped r18; divider r20) |
 | Wind speed | **Davis 7911** contact closure | **A4**, ADC burst-sampled, 47 kΩ pull-up | `ANEMO_MS_PER_HZ = 1.00584` (1 Hz = 2.25 mph) |
 | Wind direction | **Davis 7911** vane pot, 20 kΩ | analog into **A3**, 1 MΩ pull-down | linear 0–360°, plus north offset |
-| Rainfall | tipping bucket, reed *(confirm)* | dry contact to GND | `RAIN_MM_PER_TIP` (default 0.2794 mm) |
+| Rainfall | tipping bucket, reed *(confirm)* | dry contact to GND | `RAIN_MM_PER_TIP` (0.2 mm as fitted, r21) |
 
 ---
 
@@ -258,16 +284,18 @@ CubeMX MCU database [[R3]](#16-references).
 | Sensor | Interface | Pins | Where it plugs in |
 |---|---|---|---|
 | BME280 #1 (`T1`) | I²C2 | PA12 SCL / PA11 SDA | Any Grove **I²C** socket on the shield |
-| BME280 #2 (`T2`) | I²C1 | PA9 SCL / PA10 SDA | Hand-wired to D9 + A2 |
+| BME280 #2 (`T2`) | I²C1 | PA9 SCL / PA10 SDA | Hand-wired to D9 + A2 — ⚠️ **unusable while the ST divider is fitted** (shares PA10) |
 | Leaf wetness (`LW`) — **Decagon LWS** | ADC_IN5 | PB1 | **A0** (Grove A0 socket) |
-| Soil moisture (`SM`) | ADC_IN4 | PB2 | A1 |
-| Wind direction (`WD`) | ADC_IN3 | PB4 | A3 |
-| Battery divider | ADC_IN1 | PB14 | A4 |
-| Soil temp (`ST`) | SPI1 + CS | PA5/PA6/PA7 + PA4 | D13/D12/D11 + D10 |
-| Rain (`R`) | EXTI3, pull-up | PB3 | Grove **"D3"** socket, pin 1 |
-| Wind speed (`WS`) | EXTI5, pull-up | PB5 | Grove **"D3"** socket, pin 2 |
-| Battery V/I | I²C2 | PA12/PA11 | Grove I²C socket, addr `0x45` |
-| Status LED | GPIO out | PC2 | D8 |
+| Soil moisture (`SM`) — **Decagon 10HS** | ADC_IN4 | PB2 | **A1** (same Grove A0 socket, second signal pin) |
+| Soil temp (`ST`) — PT1000 + ~900 Ω divider | ADC_IN6, muxed from I²C1 SDA per read | PA10 | **A2** (divider top to 3V3) |
+| Wind direction (`WD`) | ADC_IN3 | PB4 | **A3** (Grove A3 socket) |
+| Wind speed (`WS`) | ADC_IN1, **burst-sampled** | PB14 | **A4** (same Grove A3 socket; 47 kΩ pull-up) |
+| Rain (`R`) | EXTI3, pull-up | PB3 | Grove **"D3"** socket / D3 header (8.2 kΩ external pull-up fitted) |
+| SD card | SPI1, mode 0 | PA5/PA6/PA7, CS **PB8 (D5)** | header pins; FAT32 |
+| Battery V/I — INA219 | I²C2 | PA12/PA11 | Grove I²C socket; **0x40 as fitted** (firmware probes 0x45 then 0x40) |
+| Battery divider *(fallback, not fitted)* | ADC_IN0 | PB13 | A5 |
+| Status LED (power button) | GPIO out | **PB10** | **D6** — blink language, Table 9a |
+| Legacy status LED | GPIO out | PC2 | D8 |
 | Console | USART2 → ST-LINK VCP | PA2/PA3 | USB |
 | Aux console | USART1 | PB6/PB7 | D1/D0 |
 | RF front-end | **do not touch** | PC3/PC4/PC5 | on-board switch control |
@@ -286,7 +314,7 @@ CubeMX MCU database [[R3]](#16-references).
    │  D4 PB5 ─── VSENS gate (Q1 high-side switch)                   │
    │  D9 PA9 + A2 PA10 (I2C1) ──── BME280 #2   [hand-wired]         │
    │  D8 PC2 ─── status LED          A5 PB13 ── (divider, not fitted)│
-   │  FREE: D2 (PB12), D6 (PB10), D7 (PC1)                          │
+   │  D6 PB10 ── status LED (Table 9a)     FREE: D2 (PB12), D7 (PC1)│
    └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -297,7 +325,8 @@ CubeMX MCU database [[R3]](#16-references).
    (`0x76` or `0x77`) — either works, the driver probes both.
 3. Hand-wire **BME280 #2**: SCL→D9 (PA9), SDA→A2 (PA10), 3V3, GND. Add 4.7 kΩ
    pull-ups to 3V3 on both lines **unless the breakout already has them**.
-4. Plug the **INA219** into a second Grove I²C socket; set its address to `0x45`.
+4. Plug the **INA219** into a second Grove I²C socket — leave the address
+   jumpers alone (firmware probes `0x45` then `0x40`).
 5. Wire the **SD breakout** (3.3 V-native): SCK→D13, MISO→D12, MOSI→D11,
    **CS→D5 (PB8)**, VCC→3V3 direct, GND; ~10 kΩ pull-up on CS, 100 nF + 10 µF
    across VCC/GND at the breakout. Card: **FAT32** (≤32 GB or reformat — exFAT
@@ -319,13 +348,38 @@ CubeMX MCU database [[R3]](#16-references).
 | Pin | Arduino | Note |
 |---|---|---|
 | PB12 | D2 | free (was the intended SD CS; the wire actually landed on D5 and the firmware followed it) |
-| PB10 | D6 | freed when the Pi wake line was removed |
+| PB10 | D6 | **status LED** since r26 (was free after the Pi wake line went) |
 | PC1 | D7 | freed when the Pi 5 V enable was removed |
-| PA4 | D10 | was the MAX31865 CS — hardware dropped 2026-08-13; firmware still parks it output-high |
+| PA4 | D10 | **parked, not free** — gpio.c still drives it output-HIGH as the dropped MAX31865's CS; reclaim by removing that init first |
 | PB13 | A5 (ADC_IN0) | free analog channel (divider deliberately not fitted, [D-20](#15-decision-register)) |
 | PA15, PA0, PA1, PA8, PB15, PC0, PC6 | — | not on the Arduino headers |
 
 ---
+
+### 3.3a Field power configuration (off USB, minimum consumption)
+
+The bench powers the node from the ST-LINK USB or E5V — both keep the
+STLINK-V3E debugger (~25–30 mA + LEDs) alive around the clock. For the field
+(UM2592 p.23, r25; endurance numbers in MASTER §7.7):
+
+1. **Supply**: either **STD_ALONE_5V** — 5 V into **CN11 pin 1**, GND pin 2,
+   5V_SEL jumper on **ALONE** (zero parts; the ST-LINK is not supplied; but a
+   bare 1S pack only works down to ~3.8 V through the LDO) — or, better, a
+   small **buck to 3.3 V into the 3V3 pin** (CN6 pin 4 / CN7 pin 16), which
+   uses the pack's full 4.2→3.0 V range.
+2. **Isolate the debugger**: pull the **six JP8 jumpers and JP7** (SWD/VCP
+   lines). ST: *"no current leakage coming from the STLINK-V3E debugger."*
+   Keep the jumpers in the enclosure; refit to debug.
+3. **Unplug the USB lead** — USB re-powers the ST-LINK in every supply mode.
+4. Chain: panel → charge controller → **1S 2P pack** → INA219 shunt (VIN+
+   toward the battery) → regulator → board. The INA219 must sit battery-side
+   of the regulator or the coulomb counter measures the wrong thing.
+5. Confirm the config interval is ≥15 min and `R` only if solar-backed
+   (rain forbids sleep — MASTER §7.7), then watch the D6 LED: blinking on
+   schedule, dark between cycles.
+
+*(BOM residue: the buck converter and charge controller parts are not yet
+chosen — record them in Table 1 when they are.)*
 
 ### 3.4 Component and placement summary (the assembly bill)
 
@@ -375,7 +429,8 @@ if the sign comes out inverted either swap VIN+/VIN− or flip it in software.
 | S5 | **PT1000** probe → `ST` (MAX31865 dropped r18; divider instead, r20) | **A2** (PA10) — probe between A2 and GND | — | **~900 Ω series resistor A2→3V3** — measure it, set `ANALOG_RTD_SERIES_OHMS` (~0.26 °C/Ω). ⚠️ occupies I²C1 SDA: `T2` unusable while fitted |
 | S6 | Decagon **10HS** soil moisture → `SM` | **A1** (PB2) — *red* wire | **VSENS** — *white* (**12 mA!** never a GPIO) | bare→GND; output 300–1250 mV regulated; shares the Grove A0 socket with S1 |
 | S7 | **SD-card breakout** (3.3 V-native) | SCK **D13**, MISO **D12**, MOSI **D11**, CS **D5** (PB8) | 3V3 direct, **not** VSENS | ~10 kΩ pull-up on CS; 100 nF + 10 µF at the breakout; FAT32 card ≤32 GB |
-| — | Status LED | **D8** (PC2) | — | ~1 kΩ series |
+| S8 | **Power-button status LED** → blink language ([Table 9a](#91-console-reference)) | **D6** (PB10) — anode via ~470 Ω | — | cathode → GND; dark = asleep is the design |
+| — | Legacy status LED | **D8** (PC2) | — | ~1 kΩ series (inherited; brief radio pulses) |
 
 **Discretes — the small protoboard**
 
@@ -397,7 +452,7 @@ if the sign comes out inverted either swap VIN+/VIN− or flip it in software.
 | Any transistor on a sensor **ground** | a low-side switch lifts the ground by Vce(sat) and corrupts every ground-referenced analog reading ([§15 D-19](#15-decision-register)) |
 
 **Free after all of the above:** `PB12` (D2) · `PB13` (A5) ·
-`PB10` (D6) · `PC1` (D7) · `PA4` (D10, parked) · `PA15` · `PA0` · `PA1` ·
+`PC1` (D7) · `PA4` (D10, parked) · `PA15` · `PA0` · `PA1` ·
 `PA8` · `PB15` · `PC0` · `PC6`.
 
 ## 4. Toolchain and repository setup
@@ -505,11 +560,14 @@ segment with a non-zero *FileSiz*:
 & "$B\arm-none-eabi-readelf.exe" -l .\build\Debug\EnviroNode_CM4.elf
 ```
 
-The highest load address must stay **below `0x0801F000`** — see [§7](#7-non-volatile-memory-map).
-Measured at r4: the last programmed byte is at `0x0801760F` (image ends
-`0x08017610` = 95,760 B = **93.5 KB** of the 124 KB region, 38.5 KB spare).
-The linker enforces this independently — `FLASH` is declared 124K, so an image
-that grew into page 62 would fail to link rather than silently overwrite config.
+The highest load address must stay **below `0x0801D800`** (page 59, where the
+log ring starts) — see [§7](#7-non-volatile-memory-map).
+The linker enforces this independently — `FLASH` is declared **118K**, so an
+image that grew into page 59 would fail to link rather than silently overwrite
+the log. *(Historical: at r4 the image was 93.5 KB with 38.5 KB spare against
+the then-124K region. As of r26 the image is ~118.3 KB with **~1.9 KB spare**
+after moving three files to `-Os` — check `arm-none-eabi-size` after any
+addition, and move another stable module to `-Os` when it tightens.)*
 
 ---
 
@@ -555,9 +613,16 @@ sensor frame really is transmitted on FPort 1 (`lora_app.c`, `TxPayloadPort`).
 | `main.c` | boot, clock, console command server, scheduler, mailbox service |
 | `i2c.c` / `spi.c` / `adc.c` / `gpio.c` | hand-written peripheral init (no CubeMX) |
 | `sensors/bme280.{h,c}` | BME280 probe, calibration load, forced-mode read, Bosch compensation |
-| `sensors/max31865.{h,c}` | PT1000 front-end: bias→one-shot→read→bias-off, CVD + sub-zero |
-| `sensors/analog_sensors.{h,c}` | 4 ADC channels, averaging, divider/vane scaling |
-| `sensors/pulse_counter.{h,c}` | debounced rain/wind edge counting, 3 s gust buckets |
+| `sensors/max31865.{h,c}` | (chip dropped r18) now mainly supplies `pt1000_ohms_to_celsius()` — CVD + sub-zero — for the A2 divider |
+| `sensors/analog_sensors.{h,c}` | ADC channels, averaging, vane scaling, wind burst sampler, PT1000 divider read, VSENS rail |
+| `sensors/pulse_counter.{h,c}` | debounced rain edge counting (EXTI3), 3 s gust buckets |
+| `envnode_power.{h,c}` | STOP2 sleep: RTC wake, 8 s IWDG-safe chunks, tick catch-up |
+| `envnode_log.{h,c}` | offline flash ring — 153 timestamped frames, pages 59–61 |
+| `envnode_sdlog.{h,c}` | SD daily CSV + CONFIG.INI provisioning + on-node format |
+| `sd_spi.{h,c}` | SPI-mode SD driver (CS D5/PB8, mode 0 per transaction) |
+| `envnode_diskio.c` | FatFs disk-I/O glue onto sd_spi |
+| `envnode_identity.c` | compiled-in fallback OTAA identity (placeholder AppKey) |
+| `envnode_led.{h,c}` | D6 status LED — the blink language (Table 9a) |
 | `sensors/envnode_sensors.{h,c}` | fan-out: sample every selected sensor into one struct |
 | `sensors/envnode_payload.{h,c}` | uplink packer, downlink command table, config-string entry |
 | `envnode_sensorset.{h,c}` | the `{…}` configuration-string grammar and model |
@@ -571,7 +636,7 @@ sensor frame really is transmitted on FPort 1 (`lora_app.c`, `TxPayloadPort`).
 **Figure 4 — Measurement cycle**
 
 ```
- interval elapsed (default 15 min)
+ interval elapsed (default 1 min — bench; raise to ≥15 for the field)
         │
         ▼
  sample every SELECTED sensor ──► pack 32-byte FPort-1 frame
@@ -580,7 +645,7 @@ sensor frame really is transmitted on FPort 1 (`lora_app.c`, `TxPayloadPort`).
         │                       post to mailbox, bump req_seq
         │                                  │
         ▼                                  ▼
- rain/wind counters reset          CM0+ transmits (FPort 1)
+ rain counter reset (on SENT only)  CM0+ transmits (FPort 1)
                                            │
                                            ▼
                                   drain downlink ring
@@ -593,8 +658,9 @@ sensor frame really is transmitted on FPort 1 (`lora_app.c`, `TxPayloadPort`).
                                     apply + persist
 ```
 
-Rain and wind are **event-driven** — their ISRs accumulate between cycles.
-Everything else is sampled at the top of the cycle.
+Rain is **event-driven** — its ISR accumulates between cycles. Wind is
+**burst-sampled** (3 s at ~1 kHz) *during* the cycle. Everything else is
+sampled at the top of the cycle.
 
 ---
 
@@ -609,7 +675,7 @@ reason a naive implementation misbehaves:
 |---|---|---|
 | The IWDG keeps running in STOP2 and cannot be stopped | a sleep longer than ~15 s resets the node | sleeps in **8 s chunks**, refreshing the watchdog between them — so the node stays watchdog-protected while it sleeps |
 | `HAL_GetTick()` freezes (SysTick stops with the core) | every tick-based deadline in the firmware drifts by the sleep duration | the elapsed time is **added back to the HAL tick** on wake |
-| Rain and wind-speed are counted from GPIO edges with millisecond timestamps | tips are missed and the gust window is corrupted | selecting `R` or `WS` **blocks sleeping**, and the node says so |
+| Rain is counted from GPIO edges with millisecond timestamps | tips are missed while the core is stopped | selecting `R` **blocks sleeping**, and the node says so (`WS` is burst-sampled since r12 and does not) |
 | STOP2 leaves the device on MSI with HSI off | UART/I²C/SPI run at the wrong rate after wake | `SystemClock_Config()` re-runs on every wake |
 
 The awake window each cycle is ~10 s after a transmission: a Class A device can
@@ -628,7 +694,7 @@ current draw is still an open item — see [§11.2](#112-commissioning-checklist
 | | Measure | Status |
 |---|---|---|
 | ✅ | Stop the core between cycles instead of busy-waiting | done — this section |
-| ✅ | Sample on demand rather than continuously: BME280 in **forced mode**, MAX31865 **one-shot with VBIAS off** between reads (which also stops the RTD self-heating the soil it measures) | done — [§15 D-08](#15-decision-register) |
+| ✅ | Sample on demand rather than continuously: BME280 in **forced mode**; the PT1000 divider converts per read (and its top leg can move to VSENS to kill the ~1.7 mA standing drain). *(The MAX31865 one-shot/bias-off measure, D-08, retired with the chip at r18.)* | done |
 | ✅ | Never write flash on a timer; only on an explicit config change, and only when the value actually changed | done |
 | ✅ | Longer interval = proportionally less energy; the interval is remotely settable 1–999 min | done |
 | ✅ | Gate the sensor excitation rails so probes draw nothing between samples | firmware done (VSENS on D4, 15 ms pulse); **needs the high-side switch fitted** — [PINOUT.md](PINOUT.md) |
@@ -639,14 +705,17 @@ current draw is still an open item — see [§11.2](#112-commissioning-checklist
 
 ## 7. Non-volatile memory map
 
-Two flash pages are reserved so that a node keeps its identity and its
-configuration through a power cut, and through a firmware re-flash.
+**Five** flash pages (59–63) are reserved so that a node keeps its data, its
+identity and its configuration through a power cut, and through a firmware
+re-flash.
 
 **Figure 5 — CM4 flash layout**
 
 ```
 0x08000000 ┌────────────────────────────────┐
-           │ CM4 application (FLASH = 124K) │  93.5 KB used at r4
+           │ CM4 application (FLASH = 118K) │  ~118.3 KB used at r26 (~1.9 KB spare)
+0x0801D800 ├────────────────────────────────┤
+           │ pages 59–61 — offline log ring │  envnode_log.c (153 records)
 0x0801F000 ├────────────────────────────────┤
            │ page 62 — node configuration   │  envnode_config.c
 0x0801F800 ├────────────────────────────────┤
@@ -664,8 +733,9 @@ configuration through a power cut, and through a firmware re-flash.
 | 62 | `0x0801F000` | sensor set, interval, calibration offsets, vane offset | an accepted config change |
 | 63 | `0x0801F800` | AppKey, DevEUI, JoinEUI *(node id planned — [§14](#14-build-log))* | provisioning only |
 
-Both pages are held outside the image by `STM32WL55JCIX_FLASH.ld` (`FLASH` is
-declared as **124K**, not 128K). They are **separate pages on purpose**: a flash
+All five pages are held outside the image by `STM32WL55JCIX_FLASH.ld` (`FLASH`
+is declared as **118K**, not 128K). Config and identity are **separate pages on
+purpose**: a flash
 page must be erased before rewriting, and a config save must never be able to
 take the OTAA identity with it. See [D-07](#15-decision-register).
 
@@ -731,11 +801,27 @@ what a "power-cycle test" is actually proving.
    at **115200 8N1**.
 2. Type `info`. Record the **DevEUI** it prints (the radio core derives it from
    the chip's unique ID, so it is unique per board before any provisioning).
-3. In the TTN console create an end device: **manual registration**, LoRaWAN
-   **1.0.x**, region matching your gateway (**AU915, sub-band FSB2** for the
-   reference deployment).
+3. In the TTN console create an end device — **manual registration** with
+   exactly these values (the firmware is pinned to them):
+   - **LoRaWAN version: 1.0.4** (`LORAMAC_SPECIFICATION_VERSION 0x01000400`,
+     CM0 `LoRaWAN/Target/lorawan_conf.h`). Picking 1.0.3 changes DevNonce
+     semantics and produces silent join failures.
+   - **Regional Parameters: RP002** (latest 1.0.x revision offered).
+   - **Frequency plan: "Australia 915-928 MHz, FSB 2"** on the `au1` cluster
+     for the reference deployment.
 4. Enter the DevEUI from step 2. Use `0000000000000000` as the JoinEUI/AppEUI
    unless your network requires otherwise. Let TTN generate an **AppKey**.
+
+> **Changing region or sub-band** (a gateway elsewhere): three knobs, all in
+> the CM0+ project — `ACTIVE_REGION` (`LoRaWAN/App/lora_app.h:43`), the
+> region enable in `LoRaWAN/Target/lorawan_conf.h` (~line 90), and the
+> hard-coded FSB2 channel mask in `LoRaWAN/App/lora_app.c` (~lines 449–462;
+> channels 8–15 + 65). All three must agree with the gateway.
+>
+> **Network infrastructure** *(to be recorded by the project owner)*: TTN
+> application ID, the account it lives under, and the gateway plan (hardware,
+> location, administrator). No join has succeeded yet — there has been no
+> gateway in range of the bench.
 
 **Procedure 8.2 — Load the keys into the node**
 
@@ -773,6 +859,16 @@ See [§9.2](#92-sensor-set-configuration-string) and [CONFIG.md](CONFIG.md).
 Console: ST-LINK virtual COM port, **115200 8N1**, `\r\n` line endings. The same
 command set is mirrored on USART1 (D0/D1).
 
+**Never used a serial console?** Plug in the ST-LINK USB; Windows creates a
+COM port (find its number in *Device Manager → Ports*, or
+`[System.IO.Ports.SerialPort]::GetPortNames()` in PowerShell — the reference
+bench is COM4). Open it with any terminal — PuTTY (connection type *Serial*),
+TeraTerm, or the Arduino IDE's Serial Monitor — at 115200 baud, 8 data bits,
+no parity, 1 stop bit. Set the terminal to send **CR+LF** line endings and
+enable local echo (the node does not echo typing). Then type `info`. Remember
+the node sleeps: press **B1** first, and only one program can hold the port —
+close the terminal before `flash.ps1` or `watch.ps1`.
+
 **Table 9 — Console commands**
 
 | Command | Effect |
@@ -796,13 +892,42 @@ command set is mirrored on USART1 (D0/D1).
 | `nucleo report` | dump the persistent event log (boots, reset causes) |
 | `nucleo version` | firmware version |
 | `nucleo deveui` | DevEUI the radio core is using |
-| `nucleo lorawan appkey <hex>` | provision the AppKey |
+| `nucleo lorawan appkey <32 hex>` | provision the AppKey |
+| `nucleo lorawan deveui <16 hex>` / `appeui <16 hex>` | override DevEUI / JoinEUI |
+| `nucleo lorawan join` | apply keys + (re)join, then persist them |
+| `nucleo lorawan status` | JOINED / NOJOIN |
+| `nucleo, lorawan: <text>` | raw uplink on the default port |
 | `nucleo power stats` | battery voltage / current / state of charge |
+| `nucleo power history` | last 25 h of Wh / mAh / SoC, CSV rows |
+| `nucleo send power` / `nucleo send power history` | uplink the battery snapshot / 24 h hourly SoC |
+| `nucleo i2c scan` | probe I²C2 for devices (runs the bus recovery first, so a wedge can't fake an empty bus) |
 | `nucleo tell me time`, `nucleo time is DD/MM/YYYY HH:MM:SS` | RTC read / set |
 | `nucleo list message syntax` | print the full command reference from the firmware itself |
 
 > The firmware's own `nucleo list message syntax` output is authoritative. If it
 > disagrees with this table, the table is stale — fix it per [§0.3](#03-how-this-document-is-maintained).
+
+**The status LED (D6) — read the node without a laptop.** One LED on the
+power button speaks the whole machine state, and **dark is the healthy normal**
+(the node spends most of its life asleep):
+
+**Table 9a — Status-LED blink language** (`envnode_led.{h,c}`, PB10/D6)
+
+| Pattern | Meaning |
+|---|---|
+| solid ON | booting (init in progress, ~1–2 s) |
+| 1 flash every 2 s | awake, LoRaWAN **joined**, last measurement clean |
+| 2 flashes every 2 s | awake, **not joined** (no gateway in range / no keys) |
+| 3 flashes every 2 s | awake, last measurement raised the **fault** bit (a selected sensor failed — `nucleo sensors` shows which) |
+| one short pulse | an uplink was just handed to the radio |
+| dark | **STOP2 sleep between cycles (normal)** — or no power. A node that never blinks even at cycle time is dead; one that blinks on schedule is fine |
+
+Wiring: LED anode → **~470 Ω** series resistor → **D6** (PB10, CN9 pin 7),
+cathode → GND (`ENV_PWRLED_ACTIVE_HIGH` flips for the opposite wiring). The
+pattern generator polls `HAL_GetTick()` from the main loop — no timers — so it
+vanishes in STOP2 by construction, and the sleep path forces the pin low first
+so a nap can never freeze the LED lit. Duty stays under 11 %, ~0.2 mA average
+while awake.
 
 **Live watch.** `watch.ps1` in the repo root polls `nucleo sensors` and prints
 one full reading every few seconds — the bench dashboard:
@@ -852,10 +977,12 @@ Rules that matter operationally: a frame with plain keys **replaces** the set, a
 frame with only `+`/`-` **edits** it, and **one bad token rejects the whole
 frame** without changing or writing anything. See [D-09](#15-decision-register).
 
-**Power implication.** Selecting `R` or `WS` means the node must stay awake
-between cycles, because both are counted from GPIO edges. Any other selection may
-sleep. The node reports this verdict; the sleep mode itself is not implemented
-yet ([§16 open items](#16-references) → [ROADMAP.md](ROADMAP.md) Phase 5).
+**Power implication.** Selecting **`R`** means the node must stay awake between
+cycles — rain is the only EXTI edge-counted sensor. `WS` is ADC burst-sampled
+inside the awake window (r12) and does **not** block sleep. Any other selection
+sleeps in STOP2 between cycles — implemented and hardware-verified
+([§6.4](#64-sleep-and-power)); the node prints its verdict with every config
+change.
 
 ### 9.3 Configuration data flow
 
@@ -971,6 +1098,31 @@ that job.
 > planned for offset 30 before the battery current took that slot (r22). See
 > [§14](#14-build-log) 2026-07-29 and [D-10](#15-decision-register).
 
+### 10.1a CSV data format (flash dump and SD daily files)
+
+`nucleo log dump` and the SD's `YYYYMMDD.CSV` share one 19-column schema
+(`ENVNODE_CSV_HEADER`, `main.c`) — an analyst needs no firmware knowledge:
+
+| Column | Unit / encoding |
+|---|---|
+| `timestamp` | `YYYY-MM-DD HH:MM:SS`, node RTC (local time as set) |
+| `epoch2000` | seconds since 2000-01-01 00:00:00 |
+| `status` | the frame's status byte, hex (`0x74` = soil+ST+wind+rain OK; b7 = fault) |
+| `batt_V` | volts, 3 d.p. |
+| `batt_mA` | mA, discharge positive — **empty when no INA219 answered** |
+| `air1_C`, `air1_RH`, `air1_hPa` | °C / %RH / hPa (BME280 #1) |
+| `air2_C`, `air2_RH`, `air2_hPa` | ditto, BME280 #2 |
+| `soil_raw` | 10HS ADC counts (mV = counts×3300/4095; curve off-node, SENSORS §3) |
+| `leaf_raw` | LWS ADC counts (dry ≈ 443) |
+| `soil_C` | PT1000 °C, 2 d.p. |
+| `wind_ms`, `wind_dir`, `gust_ms` | m/s / degrees / m/s |
+| `rain_tips`, `rain_mm` | count / mm, per interval |
+
+**A sensor that was deselected or failed prints an empty cell**, never a fake
+zero — blank soil_C means "not measured", `0.00` means it measured zero. A
+day file started under an older firmware keeps its original header row until
+midnight rotation.
+
 ### 10.2 Decoder
 
 The starter TTN JavaScript decoder is maintained in
@@ -983,10 +1135,12 @@ produce plausible-looking wrong data, which is worse than an obvious failure.
 
 ## 11. Bench test and commissioning
 
-> **Status at r5: not yet performed on hardware.** The firmware builds and its
-> logic is covered by an on-target self-test, but no channel has been read from a
-> real sensor. Work through [§11.1](#111-first-warm-test-two-bme280s) before
-> trusting anything, and record the results in [§14](#14-build-log).
+> **Status at r26 — most channels bench-verified.** Live on hardware: boot,
+> config, STOP2 sleep/wake, LWS dry baseline (443 counts), 10HS, PT1000
+> divider, rain (0.2 mm/tip), INA219 battery V+I, flash ring, SD CSV logging.
+> Still pending: BME280 stable contact (marginal copper), LWS wet response,
+> 7911 motion test, TTN join against a real gateway. Record every new result
+> in [§14](#14-build-log).
 
 ### 11.1 First warm test (two BME280s)
 
@@ -1062,7 +1216,7 @@ harness is built.
 | 5 | `WD` | rotate vane to N/E/S/W | ≈ 0/90/180/270° after the north offset is set |
 | 6 | `WS` | spin the anemometer at a known rate | speed tracks; check `ANEMO_MS_PER_HZ` |
 | 7 | `R` | tip the bucket 10× by hand | `rain_tips` = 10, `rain_mm` = 10 × `RAIN_MM_PER_TIP` |
-| 8 | battery | compare to a DMM | within ~1 % — else re-measure the divider resistors |
+| 8 | battery | compare `nucleo power stats` to a DMM | within ~1 %; else check the INA219 (`nucleo i2c scan`), the shunt orientation (VIN+ toward the battery) and the current sign — the divider path only applies if A5 is ever populated |
 | 9 | uplink | `nucleo uplink now` | `ACK: uplink sent, 32 bytes on FPort 1` and the frame appears in TTN |
 | 10 | downlink | queue `{5}` in TTN | node echoes the new config on the console and the interval changes |
 | 11 | persistence | power-cycle the node completely | `info` still shows the keys and the configuration |
@@ -1073,11 +1227,17 @@ Set these to the parts actually fitted, then re-run the affected test.
 
 | Constant | File | Default | Meaning |
 |---|---|---|---|
-| `RAIN_MM_PER_TIP` | `pulse_counter.h` | 0.2794 | mm of rain per bucket tip |
-| `ANEMO_MS_PER_HZ` | `pulse_counter.h` | 0.34 | m/s per Hz of anemometer pulses |
+| `RAIN_MM_PER_TIP` | `pulse_counter.h` | 0.2 | mm of rain per bucket tip |
+| `ANEMO_MS_PER_HZ` | `pulse_counter.h` | 1.00584 | m/s per Hz of anemometer pulses |
 | `RAIN_DEBOUNCE_MS` | `pulse_counter.h` | 100 | minimum time between valid tips |
 | `WIND_DEBOUNCE_MS` | `pulse_counter.h` | 5 | minimum time between valid pulses |
 | `ANALOG_RTD_SERIES_OHMS` | `analog_sensors.h` | 900.0 | **set to the DMM-measured series resistor** — ~0.26 °C per ohm of error |
+
+> ⚠️ **Reachability**: the runtime calibration commands (`set_cal` 0x04, the
+> vane north offset 0x05) exist **only as FPort-10 downlinks** — there is no
+> console form yet, and no TTN join has succeeded. Until a gateway is in range
+> (or a console command is added), field calibration means editing the
+> constants above and re-flashing.
 | `MAX31865_RREF` | `max31865.h` | 4020 | (not fitted) reference resistor, **PT1000** |
 | `MAX31865_RTD_NOMINAL` | `max31865.h` | 1000 | RTD resistance at 0 °C — also used by the divider's CVD math |
 | `ENVNODE_RTD_WIRES` | `envnode_sensors.c` | 3-wire | match the probe |
@@ -1096,7 +1256,7 @@ Set these to the parts actually fitted, then re-run the affected test.
 | Both BME280s read identically | both on the same bus | they must be on separate buses — that is the whole reason for I²C1 |
 | `rtd=n` | the A2 divider's trial read failed at boot: probe unplugged (A2 pinned at the rail), shorted, or no divider fitted | check the ~900 Ω A2→3V3 resistor and the probe to GND; `ST` reads live, so plugging in after boot works anyway |
 | Soil temp off by a constant few °C | series resistor's real value ≠ `ANALOG_RTD_SERIES_OHMS` (~0.26 °C/Ω) | measure the resistor, update the constant (or `set_cal` id 7) |
-| Soil temp wildly wrong | PT100 board fitted (430 Ω Rref) | fit a 4.02 kΩ Rref board, or change `MAX31865_RREF` |
+| Soil temp wildly wrong | series-resistor value wrong (~0.26 °C/Ω), a PT100 probe on the PT1000 divider, or `T2` selected (the divider fights I²C1) | DMM the ~900 Ω resistor into `ANALOG_RTD_SERIES_OHMS`; confirm the probe is PT1000; deselect `T2` while the divider is fitted |
 | `nucleo sd` finds no card | wrong CS pin, dead card, exFAT ≥64 GB card, or no decoupling | read the automatic R1 trace: `0xFF` = no card/wrong CS (`nucleo cshunt` finds the real pin), `0x00` = stuck-low data line (dead card), `0x01` = card answering (filesystem problem — reformat FAT32) |
 | Soil/leaf counts stuck near 0 or 4095 | probe not powered, or wrong pin | verify against [Table 4](#32-wiring-map) |
 | Rain counts climb with no rain | electrical noise on the reed line | lengthen `RAIN_DEBOUNCE_MS`, add an RC filter, shorten/shield the cable |
@@ -1418,6 +1578,62 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-18 — Thesis-grade handover sweep, audited corpus-wide (r27)
+
+The entire documentation set was audited **against the firmware source** by
+six parallel reviewers (one per document group plus a handover-completeness
+critic) and every confirmed finding fixed — the goal being that a stranger
+with the parts, the hardware and this repository can build, operate and extend
+the node with no access to the previous team. The larger corrections, so the
+diffs make sense:
+
+- **LOGBOOK deep sections**: §3.2 Table 4 was three revisions stale (battery
+  divider on A4, ST on SPI1, wind on EXTI5 — all pre-r12/r18/r20); §5.4/§7
+  still declared FLASH=124K with 38.5 KB spare (truth: **118K, ~1.9 KB
+  spare**, limit `0x0801D800`); Figure 5 lacked the log-ring band; Table 9
+  gained the nine implemented-but-undocumented commands (`i2c scan`, `power
+  history`, `send power…`, the `lorawan` provisioning set, raw uplink); §6.3/
+  §6.4/§9.2 still said wind blocks sleep and "sleep not implemented yet"; §11's
+  banner still claimed nothing had run on hardware. A **Quick start** (§0.0)
+  now opens the document.
+- **MASTER.md m1→m2**: was tracking r14; absorbed r15–r26 (SD, 10HS, PT1000
+  divider, rain, INA219/fmt 0x02, bus recovery, sd format, LED), gained the
+  battery/SoC chapter (§7.5), the field-power chapter (§7.6), the measured
+  **endurance budget table** (§7.7) and a rewritten Verification chapter.
+- **PAYLOAD.md**: the starter TTN decoder now **gates every field on its
+  status bit** — previously a deselected sensor decoded as plausible garbage
+  (655.35 m/s wind); the AU915 sizing note corrected to **DR3+** under the
+  region's default 400 ms dwell time (DR2 carries only 11 B).
+- **CONFIG.md**: default interval corrected to 1; factory default set to
+  `{LW,T1,T2,SM,1}`; ST row repointed at the A2 divider; the **ST/T2
+  hardware mutual exclusion** documented; five undocumented parser rejection
+  rules added (`{?,R}`, `{5,10}`, trailing text, empty tokens, signed aliases).
+- **PINOUT.md**: the optional 100 nF debounce cap on A4 **deleted with a
+  warning** — with the 47 kΩ pull-up it makes RC ≈ 4.7 ms, which at the
+  7911's 88 Hz ceiling would silently cap recordable wind speed; VSENS table
+  gained the 10HS's 12 mA; PA4 marked *parked, not free*.
+- **ROADMAP/CLAUDE/ARCHITECTURE**: phase claims, default interval, SPI CS,
+  EXTI list and boot-transcript examples brought to r26 truth.
+
+### 2026-08-18 — Status LED on D6: the blink language (r26)
+
+**The node can now be read without a laptop.** A power-button LED on **D6
+(PB10)** — the pin freed when the Pi wake line was removed — speaks a five-word
+blink language ([Table 9a](#91-console-reference)): solid = booting, 1 flash =
+awake+joined, 2 = awake+not-joined, 3 = awake+fault, pulse = uplink handed to
+the radio, **dark = asleep (the healthy normal)**. New module
+`envnode_led.{h,c}`; the pattern generator polls `HAL_GetTick()` from the main
+loop (no timers, no interrupts), so STOP2 silences it by construction and the
+sleep path forces the pin dark first — a frozen-lit LED would out-draw the
+sleeping MCU a hundredfold. Mode is recomputed every loop pass from the radio's
+`joined` flag and the last frame's fault bit. Wiring: anode → ~470 Ω → D6 (CN9
+pin 7), cathode → GND; `ENV_PWRLED_ACTIVE_HIGH` flips polarity.
+
+**Flash budget restored:** the module landed with 44 bytes to spare, so
+`envnode_sensorset.c` and `envnode_log.c` (both selftest-covered, never
+debugged at -O0) moved to `-Os` — headroom back to ~1.9 KB. The pattern for
+the next squeeze is established: stable module → `-Os` in CMakeLists.txt.
 
 ### 2026-08-18 — `nucleo sd format`; field-power findings from UM2592 p.23 (r25)
 
@@ -2088,7 +2304,7 @@ If you built a node before this date, LW and SM are swapped relative to yours.
 | D-11 | 3-second gust buckets | Matches the WMO gust definition and cannot be spiked by a single bounced edge | "Shortest gap seen" — one bounce produced an absurd gust |
 | D-12 | Sleep in 8 s chunks rather than one long STOP2 | The IWDG runs in STOP2 and cannot be stopped, so one long nap would reset the node; chunking keeps watchdog cover *during* the sleep | Disabling the watchdog while asleep — trades a real hang-protection for nothing |
 | D-13 | Advance the HAL tick by the slept time on wake | Every deadline in this firmware is tick-based; without it the scheduler drifts by exactly the sleep duration each cycle | Converting every deadline to RTC time — a far larger change for the same result |
-| D-14 | Rain/wind selection blocks sleeping | Both are counted from GPIO edges with millisecond timestamps; a stopped core drops tips and corrupts the gust window | Waking on every edge — defeats the power saving and still loses the timestamps |
+| D-14 | Rain/wind selection blocks sleeping *(superseded for WS by [D-21](#15-decision-register), r12 — rain only since)* | Both were counted from GPIO edges with millisecond timestamps; a stopped core drops tips and corrupts the gust window | Waking on every edge — defeats the power saving and still loses the timestamps |
 | D-15 | Compiled-in fallback identity, tried last | A virgin board should join and be visible on the gateway, not sit silent waiting to be provisioned | Refusing to join without provisioning — turns every new board into a console session before it shows any sign of life |
 | D-16 | Defaults are `{T1,T2,1}`, not `{ALL,15}` | The first build has only the two air sensors fitted; defaulting to ALL flags a fault for every probe that does not exist yet | `{ALL}` — noisy status byte, and the fault bit stops meaning anything |
 | D-17 | Clear rain/wind accumulators only after CM0+ confirms the send | A refused uplink (not joined, duty cycle) would otherwise destroy that interval's rainfall permanently | Clearing at sample time — simpler, but silently loses data exactly when the radio is struggling |
@@ -2130,9 +2346,11 @@ If you built a node before this date, LW and SM are swapped relative to yours.
 | R12 | **Davis Instruments DS7911 Rev G** — *7911 Anemometer* spec sheet. Local copy: `Anemometer 7911_SS.pdf` | Wind speed `V = P(2.25/T)`, 1600 rev/hr = 1 mph, 20 kΩ direction pot, wire colours, cable limits |
 | R13 | **Decagon 10HS Operator's Manual** (10HS soil moisture sensor; the probe Solem sells as "EC-10 HS"). Local copy: `10HS_Manual.pdf` | Soil moisture: 3 VDC @ 12 mA–15 VDC @ 15 mA, 300–1250 mV regulated output, 10 ms measurement time, 0–50 °C operating, mineral-soil calibration polynomial, wire colours (its CR10X listing states them outright: *"white – excitation, red – Vout, bare – gnd"*) |
 
-**Open items** are tracked in [ROADMAP.md](ROADMAP.md). The largest at r19:
-the intermittent BME280 I²C contact, TTN join against a real gateway, the
-current-draw measurement, the FPort-2 diagnostic uplink, and implementing the
-node id from [D-10](#15-decision-register).
+**Open items** are tracked in [ROADMAP.md](ROADMAP.md). The largest at r27:
+the 7911 cups-spin/vane-motion test, TTN join against a real gateway, the
+sleep-floor current measurement (ST-LINK isolated per MASTER §7.6), the
+FPort-2 diagnostic uplink, the node id from [D-10](#15-decision-register), and
+the ~1.9 KB flash-headroom pressure. *(The BME280 intermittency was diagnosed
+and firmware-mitigated at r23 — the residue is physical contact.)*
 Minor: the inherited `LoRaMacMibSetRequestConfirm` implicit declaration in CM0+
 `lora_app.c` (see [§14](#14-build-log), r4).

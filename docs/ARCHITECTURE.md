@@ -40,7 +40,7 @@ What happens, in order, with the console line each step prints:
 | 1 | Clocks: HSI 16 MHz core, LSE→RTC (LSI fallback) | — |
 | 2 | Peripherals: GPIO, ADC (+calibration), I²C1, I²C2, SPI1, USART1/2, RTC | — |
 | 3 | RTC status | `BOOT: BKP_DR0=… <date> <time>` |
-| 4 | Config from flash page 62 (or defaults) | `CONFIG: {LW,T1,T2,1}` |
+| 4 | Config from flash page 62 (or defaults) | `CONFIG: {LW,T1,T2,SM,1}` |
 | 5 | Sleep subsystem: RTC wake-up IRQ armed | — |
 | 6 | Offline log: scan ring, find head | `LOG  : n of 153 records` + `SDLOG:` status |
 | 7 | Sensor drivers probed (absent ≠ fatal) | `SENSORS: partial (air1=y … ina219=n)` |

@@ -45,6 +45,14 @@ target_sources(${BUILD_UNIT_0_NAME} PRIVATE
 set_source_files_properties("Middlewares/FatFs/ff.c"
   PROPERTIES COMPILE_OPTIONS "-Os")
 
+# Same treatment for stable, self-tested application modules: the config-string
+# parser and the flash ring are covered by `nucleo selftest` vectors and never
+# debugged at -O0. Moved here at r26 when the image hit 44 bytes of headroom.
+set_source_files_properties(
+  "Core/WL55JC1/Src/envnode_sensorset.c"
+  "Core/WL55JC1/Src/envnode_log.c"
+  PROPERTIES COMPILE_OPTIONS "-Os")
+
 # Add include directories
 target_include_directories(${BUILD_UNIT_0_NAME} PRIVATE
   # User defined include directories

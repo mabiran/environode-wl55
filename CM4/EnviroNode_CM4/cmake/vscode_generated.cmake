@@ -22,6 +22,7 @@ target_sources(${BUILD_UNIT_0_NAME} PRIVATE
     "Core/WL55JC1/Src/envnode_identity.c"
     "Core/WL55JC1/Src/envnode_keystore.c"
     "Core/WL55JC1/Src/envnode_diskio.c"
+    "Core/WL55JC1/Src/envnode_led.c"
     "Core/WL55JC1/Src/envnode_log.c"
     "Core/WL55JC1/Src/envnode_power.c"
     "Core/WL55JC1/Src/envnode_sdlog.c"

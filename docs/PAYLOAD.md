@@ -63,16 +63,20 @@ function decodeUplink(input) {
     return { warnings: ["unknown frame"], data: {} };
   const i16 = o => dv.getInt16(o, true), u16 = o => dv.getUint16(o, true);
   const st = b[1];
+  // Gate every block on its status OK-bit: a deselected or failed sensor
+  // sends sentinels, and decoding those unconditionally renders plausible
+  // garbage (655.35 m/s wind, 327.67 °C soil). null = "no data".
   const data = {
     status: st,
-    batt_V:      u16(2) / 1000,
-    air1:  { t: i16(4)/100,  rh: b[6]/2,  p: u16(7)/10 },
-    air2:  { t: i16(9)/100,  rh: b[11]/2, p: u16(12)/10 },
-    soil_moisture: u16(14),
-    leaf_wetness:  u16(16),
-    soil_temp:     i16(18)/100,
-    wind: { speed: u16(20)/100, dir: u16(22)/10, gust: u16(24)/100 },
-    rain: { tips: u16(26), mm: u16(28)/100 },
+    fault:  !!(st & 0x80),
+    batt_V: u16(2) / 1000,
+    air1: (st & 0x01) ? { t: i16(4)/100,  rh: b[6]/2,  p: u16(7)/10 }  : null,
+    air2: (st & 0x02) ? { t: i16(9)/100,  rh: b[11]/2, p: u16(12)/10 } : null,
+    soil_moisture: (st & 0x04) ? u16(14) : null,
+    leaf_wetness:  (st & 0x08) ? u16(16) : null,
+    soil_temp:     (st & 0x10) ? i16(18)/100 : null,
+    wind: (st & 0x20) ? { speed: u16(20)/100, dir: u16(22)/10, gust: u16(24)/100 } : null,
+    rain: (st & 0x40) ? { tips: u16(26), mm: u16(28)/100 } : null,
   };
   if (b[0] >= 0x02 && b.length >= 32 && i16(30) !== 0x7FFF)
     data.batt_mA = i16(30);   // discharge positive, charging negative
@@ -80,7 +84,17 @@ function decodeUplink(input) {
 }
 ```
 
-### Auxiliary uplinks (optional, later)
+### Auxiliary uplinks
+
+**Live today (inherited KoreroNet power frames, sent on the radio core's
+default app port — not FPort 1):**
+- `nucleo send power` → 7 bytes: `0x01`, SoC_i %, SoC_v %, voltage in
+  centi-volts (u16 LE), current in mA (i16 LE).
+- `nucleo send power history` → 26 bytes: `0x02`, `24`, then 24 hourly SoC
+  bytes. A decoder must branch on the first byte; neither frame is part of the
+  fmt-0x02 schema above.
+
+**Planned:**
 - **FPort 2 — diagnostics:** reset cause, uptime, per-sensor error counts, RSSI/SNR
   of last downlink, firmware version. (Mirrors KoreroNet's `nucleo report` idea.)
 - **FPort 3 — event/alarm:** threshold crossings (e.g. rain rate, low battery).
@@ -171,7 +185,9 @@ AppKey survives a full power loss (`envnode_keystore.c`).
 ---
 
 ## Sizing / region notes
-- The 32-byte uplink fits AU915 **DR2+** (and US915). If you must fit DR0/DR1, split
+- The 32-byte uplink fits AU915 **DR3+** while the region's default 400 ms
+  uplink dwell time applies (DR2 then carries only 11 B); with dwell disabled
+  it fits every DR. If you must fit lower rates, split
   into two frames (air block / weather block) or drop the derived `rain_mm`.
 - Uplink cadence is a power/airtime trade-off — default **every 15 min**
   (`set_interval`), with `uplink_now` for on-demand reads. Respect the regional

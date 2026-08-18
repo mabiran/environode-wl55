@@ -78,6 +78,7 @@
 #include "envnode_log.h"               /* offline sensor log (flash ring)        */
 #include "sd_spi.h"                    /* SD low-level driver                    */
 #include "envnode_sdlog.h"             /* SD CSV logging + CONFIG.INI creds      */
+#include "envnode_led.h"               /* status LED on D6 (blink language)      */
 #include "sensors/envnode_sensors.h"
 #include "sensors/envnode_payload.h"
 #include "sensors/analog_sensors.h"
@@ -217,6 +218,9 @@ static uint32_t g_last_tx_ms     = 0u;  /* last transmission attempt           *
 static uint16_t g_armed_interval = 0u;  /* interval the deadline was built from*/
 static uint8_t  g_sched_armed    = 0u;  /* boot frame has been scheduled       */
 static uint8_t  g_sched_paused   = 0u;  /* {NONE} notice already printed       */
+
+/* Last packed frame's status byte — the LED's fault-pattern source. */
+static uint8_t  g_last_frame_status = 0u;
 
 /* Battery “full” tracking state */
 static uint8_t  full_marked   = 0;
@@ -457,6 +461,8 @@ int main(void)
      the rain/wind pulse counters. A missing sensor is reported but never fatal:
      the node still uplinks the channels that do work. */
   {
+    envnode_led_init();                        /* D6 status LED — solid ON     */
+    envnode_led_set_mode(ENVLED_BOOT);         /* until the first loop pass    */
     envnode_config_init();                     /* interval / cal / sensor mask */
     envnode_power_init();                      /* RTC wake-up for STOP2 sleep  */
     {
@@ -601,6 +607,18 @@ int main(void)
 
     /* Single silent call that samples INA/ADC, handles FULL detection, and updates coulomb counter */
     PowerStats_Tick();
+
+    /* Status LED (D6): pick the pattern from live state, then drive the pin.
+       BOOT mode was set during init; from here the LED speaks the blink
+       language in envnode_led.h. Dark-while-asleep needs no code — STOP2
+       stops this very loop. */
+    {
+      volatile KoreroMailbox_t *mbl = KORERO_MAILBOX;
+      if (g_last_frame_status & SENS_FAULT)                     envnode_led_set_mode(ENVLED_FAULT);
+      else if (mbl->magic == KORERO_MB_MAGIC && mbl->joined)    envnode_led_set_mode(ENVLED_OK);
+      else                                                      envnode_led_set_mode(ENVLED_NOJOIN);
+      envnode_led_tick();
+    }
 
     /* B1 = console always-awake (sleep off), B2 = normal sleep schedule.
        CM0+ owns the buttons and posts presses via the mailbox pi_pwr channel
@@ -1115,6 +1133,7 @@ static int EnvNode_UplinkNow(void)
     UART1_Send("ERR: sensor sample failed\r\n");
     return 0;
   }
+  g_last_frame_status = r.status;         /* drives the status LED's pattern */
   size_t n = envnode_payload_pack(&r, frame, sizeof(frame));
   if (n != ENVNODE_UPLINK_LEN) {
     UART1_Send("ERR: payload pack failed\r\n");
@@ -1156,6 +1175,7 @@ static int EnvNode_UplinkNow(void)
   __DMB();
   mb->req_seq = want;                     /* commit -> CM0+ transmits */
   g_last_tx_ms = HAL_GetTick();           /* starts the post-TX awake window */
+  envnode_led_pulse();                    /* visible breath at each uplink   */
 
   uint32_t t0 = HAL_GetTick();
   while (mb->ack_seq != want) {

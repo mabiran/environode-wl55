@@ -20,6 +20,7 @@
 #include "envnode_sensorset.h"
 #include "rtc.h"                 /* hrtc  */
 #include "main.h"                /* SystemClock_Config, HAL */
+#include "envnode_led.h"         /* dark before STOP2 */
 
 /* SysTick is stopped in STOP2; uwTick is the HAL's millisecond counter and is
    advanced by hand on wake so every tick-based deadline stays honest. */
@@ -106,6 +107,9 @@ static int power_stop2_for(uint32_t seconds)
 uint32_t envnode_power_sleep_seconds(uint32_t seconds)
 {
   if (seconds < ENVNODE_SLEEP_MIN_S) return 0u;
+
+  /* A flash frozen mid-beat would burn ~2 mA all nap — dark means asleep. */
+  envnode_led_off();
 
   uint32_t slept = 0u;
 

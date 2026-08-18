@@ -8,10 +8,13 @@ Drivers live in `CM4/EnviroNode_CM4/Core/WL55JC1/{Inc,Src}/sensors/`.
 Each section names its **config key** — the token that selects that sensor in the
 brace configuration string, e.g. `{T1,T2,ST,60}`.
 
-> **State: implemented.** All four drivers are complete, compiled into the CM4
-> image, and driven by `envnode_sensors_sample()`. They have not yet been run
-> against real sensors — bench-test each one with `nucleo sensors` on the ST-Link
-> console before trusting a field deployment.
+> **State: implemented, largely bench-verified.** All drivers are compiled into
+> the CM4 image and driven by `envnode_sensors_sample()`. Hardware-verified on
+> the bench: the **10HS** (r19/r20), the **PT1000 A2 divider** (19.5–20.4 °C,
+> r20), the **rain gauge** at 0.2 mm/tip (r21), the **INA219** battery V+I
+> (r22–r24), the **LWS dry baseline** (443 counts) and **SD logging**. Still
+> pending: the BME280 pair (marginal I²C contact), the LWS wet response, and
+> the 7911 cups-spin/vane-motion test.
 >
 > Console: `nucleo sensors` prints one full frame (non-destructive — it does not
 > consume the rain/wind interval), `nucleo uplink now` sends the 32-byte frame,
@@ -124,7 +127,11 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
   ≈ 4 mA × 24 h ≈ **91 mAh/day** — acceptable on the bench, not on a solar node.
   Switching it needs a high-side load switch (**not** a GPIO: ~4 mA droops a
   push-pull output by 0.1–0.2 V ≈ 3–6 %, and the wet threshold sits only ~3 %
-  above dry). **Not implemented — open item.**
+  above dry). **Firmware side implemented** — VSENS (PB5/D4) is pulsed with a
+  15 ms settle around every analog read (`analog_sensors.c`); the open item is
+  fitting the high-side transistor itself (PINOUT.md, "Switched sensor rail").
+  Until it is fitted the sensor runs from permanent VCC and the GPIO toggle is
+  a harmless no-op.
 - **Deployment:** electrodes facing **up**, ~45° from horizontal, pole-ward
   facing, clear of irrigation. Clean with water only; reapply UV protectant every
   ~45 days (yellowing is expected). **No IP rating is published** by Decagon or
@@ -132,12 +139,21 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
 - **No mV→water-quantity transfer function exists.** It is a threshold/duration
   sensor; no accuracy or repeatability figure is published for either generation.
 
-## 5 · Battery voltage — divider (`analog_sensors.{h,c}`)
+## 5 · Battery voltage **and current** — INA219 primary (`ina219.{h,c}`)
 - **Config key:** none — battery is **not selectable** and is measured on every
   cycle whatever the sensor set says (you cannot afford to lose it remotely).
-- **Interface:** ADC via resistor divider. `Vbatt = Vadc × BATT_DIVIDER_RATIO`.
-- **Set** `BATT_DIVIDER_RATIO` to your resistors; verify against a DMM.
-- **On-air:** millivolts (u16), always sent.
+- **Primary: INA219 on I²C2** (init probes `0x45` then the factory `0x40` — the
+  fitted breakout answers **0x40**; R_shunt 0.1 Ω, high-side in the battery
+  line). Gives bus voltage *and* signed current (discharge positive); feeds the
+  coulomb counter (`nucleo power stats`).
+- **Pack:** 1S Li-ion 2P — 2 × 6600 mAh = 13 200 mAh, 4.2 V full / 3.0 V empty
+  (`pins_config.h`, D-31).
+- **Fallback: resistor divider on PB13 (A5)** — deliberately not fitted on this
+  node (D-20). If fitted: `Vbatt = Vadc × VBAT_DIVIDER_GAIN`, with
+  `VBAT_RTOP_OHMS`/`VBAT_RBOT_OHMS` set to the *measured* resistors.
+- **On-air (fmt 0x02, 32-byte frame):** `batt_mV` u16 at offset 2 **and**
+  `batt_mA` i16 at offset 30 — both always sent; the current carries its own
+  `0x7FFF` sentinel when no INA219 answers.
 
 ## 6 · Wind direction — **Davis 7911** vane potentiometer (`analog_sensors.{h,c}`)
 - **Config key:** `WD` (shares the `SENS_OK_WIND` status bit with `WS`).
@@ -200,11 +216,13 @@ buys 15-bit resolution and lead-resistance compensation (3/4-wire).
 
 ## 8 · Rain — tipping bucket (`pulse_counter.{h,c}`)
 - **Config key:** `R`. **Edge-counted → the node must stay awake while `R` is
-  selected** (see [CONFIG.md](CONFIG.md); STOP2 sleep itself is Phase 5).
+  selected** — STOP2 sleep is implemented and hardware-verified, and selecting
+  `R` is the one thing that blocks it (see [CONFIG.md](CONFIG.md)).
 - **Interface:** reed switch on **PB3 (D3)** → **EXTI3**, internal pull-up,
   falling edge. Debounced in `pulse_rain_isr` (`RAIN_DEBOUNCE_MS` = 100 ms — a
   bucket cannot physically tip faster than that).
-- **Calibration:** `RAIN_MM_PER_TIP` (0.2794 mm for a 0.011″ bucket — set to yours).
+- **Calibration:** `RAIN_MM_PER_TIP` = **0.2 mm** — the metric figure printed on
+  the fitted bucket (was 0.2794 mm = 0.011″, corrected r21 — set to yours).
 
 ## 9 · Wind speed — **Davis 7911** anemometer (`pulse_counter.{h,c}`)
 - **Config key:** `WS` (carries the gust field too). **Sampled, not edge-counted —
@@ -251,8 +269,9 @@ buys 15-bit resolution and lead-resistance compensation (3/4-wire).
   window, which is why 2.25 appears in the formula above.)
 - **Cable:** 4-conductor 26 AWG, 12 m attached, RJ-11 plug. Recommended maximum
   42 m sensor-to-logger; beyond that the maximum *recordable* speed falls, though
-  accuracy does not. A **10 kΩ external pull-up** to 3V3 is recommended over the
-  internal ~40 kΩ because of that cable length.
+  accuracy does not. The **47 kΩ pull-up to 3V3 is required** — A4 is an ADC
+  input, so no internal pull-up exists; 47 kΩ halves the closed-contact current
+  versus 10 kΩ while staying stiff enough for the cable.
 
 ---
 
@@ -268,7 +287,8 @@ buys 15-bit resolution and lead-resistance compensation (3/4-wire).
 | `WS` | Wind speed / gust | `pulse_counter` | `wind_speed_ms` / `wind_gust_ms` | 20 / 24 |
 | `WD` | Wind direction | `analog_sensors` | `wind_dir_deg` | 22 |
 | `R` | Rain tips / mm | `pulse_counter` | `rain_tips` / `rain_mm` | 26 / 28 |
-| — | Battery | `analog_sensors` | `batt_v` | 2 (always, not selectable) |
+| — | Battery voltage | `ina219` (divider fallback) | `batt_v` | 2 (always, not selectable) |
+| — | Battery current | `ina219` | `batt_i_a` | 30 (always; i16 mA, `0x7FFF` sentinel when no INA219) — frame is fmt 0x02, 32 bytes |
 
 Each driver sets its **status OK-bit** (`SENS_OK_*`) on a good read; the packer
 substitutes the sentinel (`0x7FFF`/`0xFFFF`/`0xFF`) when a bit is clear. A sensor

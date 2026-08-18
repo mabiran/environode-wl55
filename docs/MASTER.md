@@ -12,7 +12,7 @@ did, what is proven, and what remains open.
 
 | | |
 |---|---|
-| Revision | m1 — 2026-08-04, tracks LOGBOOK r14 |
+| Revision | m2 — 2026-08-18, tracks LOGBOOK r26 |
 | Author | Mabiran (AUT University, Ecology Project) with Claude (Anthropic) as firmware co-author |
 | Platform | NUCLEO-WL55JC1 (STM32WL55JC) · Grove Base Shield V2 · LoRaWAN AU915 / The Things Network |
 
@@ -136,12 +136,13 @@ only a *failed* read raises the fault bit.
 |---|---|---|---|
 | Air T/RH/P ×2 | 2 × Bosch BME280 | I²C2 (shield) + I²C1 (board pins) | both answer at 0x76/0x77 → **two buses**, not straps |
 | Leaf wetness | Decagon LWS (METER PHYTOS 31) | ADC, A0 | **dielectric**, not resistive; ratiometric output 10–50 % of excitation; wants *pulsed* excitation |
-| Soil moisture | analog probe | ADC, A1 | raw counts on air; curve applied off-node |
+| Soil moisture | **Decagon 10HS** | ADC, A1 | 300–1250 mV regulated output (not ratiometric), 12 mA excitation — powered from VSENS, never a GPIO; mineral-soil curve applied off-node (LOGBOOK r19/r20) |
 | Soil temperature | PT1000 + **~900 Ω divider** | ADC (A2/PA10) | ratiometric off the 3V3 reference, same CVD math; MAX31865 dropped (LOGBOOK r18), divider live-verified 19.5–20.4 °C (r20). A2 doubles as I²C1 SDA — `T2` unusable while fitted |
 | Wind speed | Davis 7911 contact | ADC, A4 (burst-sampled) | 1 Hz = 2.25 mph from the datasheet; see §7.3 |
 | Wind direction | Davis 7911 vane pot | ADC, A3 | 20 kΩ linear, 0 Ω = north; 1 MΩ dead-band pull-down |
-| Rainfall | tipping bucket | EXTI, D3 | edge-counted; the one sensor that forbids sleep |
-| Battery | INA219 @0x45 | I²C2 | measures current *and* voltage; replaced a leaky divider |
+| Rainfall | tipping bucket | EXTI, D3 | edge-counted, **0.2 mm/tip** (printed on the fitted bucket — the inherited 0.2794 mm constant was wrong, r21); the one sensor that forbids sleep |
+| Battery | INA219 @**0x40** (probes 0x45 then 0x40) | I²C2 | measures current *and* voltage; replaced a leaky divider |
+| Status LED | power-button LED on D6 | GPIO | five-word blink language; dark = asleep (r26, LOGBOOK Table 9a) |
 
 Authoritative pin map and the assembly bill: [PINOUT.md](PINOUT.md), LOGBOOK
 [§3.4](LOGBOOK.md#34-component-and-placement-summary-the-assembly-bill).
@@ -161,7 +162,21 @@ pays twice (full register: LOGBOOK [§15](LOGBOOK.md#15-decision-register)):
 - **A wrong generic constant under-read wind 3×.** The inherited
   `ANEMO_MS_PER_HZ = 0.34` placeholder survived until the 7911 datasheet's
   `V = P(2.25/T)` was actually read: the correct value is 1.00584 m/s per Hz
-  (LOGBOOK r9).
+  (LOGBOOK r9). The same error class recurred twice more: the rain gauge
+  (0.2794 → 0.2 mm/tip, r21) and the battery model (4S LiFePO₄ thresholds on a
+  1S pack, r22/r24). *Lesson: every inherited constant is wrong until checked
+  against the part actually fitted.*
+- **I²C buses wedge — and it looks exactly like bad wiring.** A glitch on a
+  marginal SDA/SCL contact latches the STM32 I²C peripheral's BUSY flag; from
+  then on every device on the bus scans empty even though the slaves are fine.
+  This masqueraded for weeks as "the BME280s answer intermittently" and then
+  took the INA219 down mid-session. The cure is threefold (r23, D-32): an
+  automatic bus recovery (`I2C2_BusRecover()` — de-init, up to nine manual SCL
+  clocks, STOP, re-init) runs whenever the per-cycle battery read fails and
+  before every `nucleo i2c scan`; I²C2 dropped from 400 kHz to **100 kHz**
+  standard mode (nothing on it needs speed, 4× timing slack); and the scan
+  command un-wedges before scanning so a lockup can never masquerade as a
+  wiring fault again.
 
 ---
 
@@ -222,9 +237,11 @@ rainfall (D-17).
 ### 6.1 Uplink
 
 FPort 1, fixed 32 bytes (fmt 0x02 — battery voltage and current always aboard), little-endian scaled integers, one frame per cycle;
-sentinels for absent data; battery always present. Byte-exact layout and the
-TTN JavaScript decoder: [PAYLOAD.md](PAYLOAD.md). A planned revision (fmt
-0x01→0x02) appends a u16 node id at offset 30 (§10).
+sentinels for absent data; battery voltage *and* current always present (the
+current carries its own sentinel — an absent INA219 is distinguishable from
+0 mA). Byte-exact layout and the TTN JavaScript decoder:
+[PAYLOAD.md](PAYLOAD.md). A planned revision (fmt 0x02→0x03) appends a u16
+node id at offset 32 (§10).
 
 ### 6.2 Downlink
 
@@ -241,7 +258,16 @@ reference the firmware itself prints (`nucleo list message syntax`); the same
 brace strings work verbatim. Command inventory: LOGBOOK
 [§9.1](LOGBOOK.md#91-console-reference).
 
-### 6.4 Addressing
+### 6.4 The status LED
+
+For the operator without a laptop, one LED on the power button (D6) speaks a
+five-word language (r26): solid = booting; one, two or three flashes per
+2-second beat = awake and joined / not joined / last measurement faulted; a
+single pulse marks each uplink; **dark means asleep — the healthy normal**.
+The generator polls the HAL tick from the main loop, so STOP2 silences it by
+construction and a nap can never freeze it lit. Full table: LOGBOOK Table 9a.
+
+### 6.5 Addressing
 
 Delivery to a specific node is LoRaWAN's job — unique DevEUI (derived from the
 chip's factory UID), per-session encryption, unicast downlinks. What the
@@ -257,9 +283,11 @@ planned node-id feature (§10).
 
 Energy is spent only on demand: sensors are excited for milliseconds per cycle,
 the radio transmits one frame per interval, the core sleeps in between, and
-flash is written only when something changed. Estimates below are design-time
-figures; **no current profile has been measured yet** — that measurement is the
-top open bench item.
+flash is written only when something changed. The awake current is now
+**measured** (INA219, battery side): **119–125 mA at 4.07 V ≈ 0.49 W** with the
+console live, and an awake window of ~15 s per cycle on the 1-minute bench
+schedule. The remaining unmeasured figure is the true STOP2 sleep floor, which
+requires the ST-LINK isolated (§7.6) and a meter in the battery lead.
 
 ### 7.2 The switched sensor rail
 
@@ -282,10 +310,72 @@ are rare and must never be missed.
 
 ### 7.4 Battery sensing
 
-An INA219 on the shield bus (0x45, 0.1 Ω shunt) measures voltage *and* current,
-so charge/discharge direction and coulomb counting come free; the resistor
+An INA219 on the shield bus (strapped **0x40** as fitted; init probes 0x45 then
+0x40, so either works — 0.1 Ω shunt) measures voltage *and* current, so
+charge/discharge direction and coulomb counting come free; the resistor
 divider it replaced leaked 184 µA continuously and measured only voltage
-(D-20).
+(D-20). Both ride in **every** uplink since fmt 0x02 (r22).
+
+### 7.5 The battery and state of charge
+
+The pack is **1S 2P Li-ion**: two 3.7 V / 6600 mAh cells in parallel —
+13 200 mAh, 4.2 V full, 3.0 V empty (D-31; the inherited 4S LiFePO₄ thresholds
+sat ~3× above 1S voltages and could never trigger). State of charge is
+estimated two ways and both are reported (`nucleo power stats`):
+
+- **SoC_v** — from a 1S resting-voltage map (pessimistic under load);
+- **SoC_i** — a **coulomb counter**: shunt current integrated every loop pass,
+  seeded from the voltage map at boot, and **re-anchored to exactly 100 % at
+  end of charge** (voltage ≥ 4.15 V *and* tail current below C/80 held 5 s —
+  tail current is the key: terminal voltage under charge proves nothing).
+  Verified live: `SoC_i = 86 %, SoC_v = 86 %` at 4.07 V (r23/r24).
+
+Accepted limits, recorded rather than hidden: integration runs only while the
+CM4 is awake (a sleeping node's off-time is not counted); the shunt and the
+INA219's offset are uncalibrated (~1 % class — the full-charge re-anchor
+exists to absorb the drift); `used_mAh` is RAM-only, so a reboot falls back to
+the voltage seed.
+
+### 7.6 Powering the node in the field
+
+Deployment-critical findings from UM2592 p.23 (r25):
+
+- **E5V powers the ST-LINK too** — ~25–30 mA of programmer and LEDs that never
+  sleeps. Never deploy on E5V.
+- **STD_ALONE_5V** (CN11 pin 1 = 5 V, pin 2 = GND; 5V_SEL jumper on ALONE)
+  feeds the target only: *"the STLINK-V3E debugger is not supplied."* Zero
+  parts, solves the LED/overhead problem instantly.
+- **True zero leakage** additionally wants the six **JP8** jumpers and **JP7**
+  removed (the SWD/VCP lines) — ST: *"no current leakage coming from the
+  STLINK-V3E debugger."* This is also the precondition for any honest current
+  measurement. Refit to debug.
+- **USB always re-powers the ST-LINK**, whatever the supply mode — a dark
+  board requires the USB lead out. Plugging it back in for a console session
+  does not disturb the target's supply (the documented debug arrangement).
+- A bare 1S pack through the 5 V-input LDO (needs ~3.6–3.8 V in) wastes the
+  bottom ~half of the pack. Full-range use wants a small **buck to 3.3 V into
+  the 3V3 pin** (CN6 pin 4 / CN7 pin 16), which also bypasses the LDO's loss.
+
+### 7.7 Endurance budget (no sun, 13 200 mAh pack)
+
+Measured where possible (awake 119 mA @ 4.07 V; 15 s awake per cycle),
+estimated where the serial cannot see (sleep floors, marked *est.*):
+
+| Scenario | Avg draw | Runtime |
+|---|---|---|
+| Bench as-is (E5V, sleep off) | 119 mA | ~4½ days |
+| E5V, sleep on, 1-min interval | ~51 mA *(floor ~30 mA est. — ST-LINK)* | ~11 days |
+| E5V, sleep on, 15-min | ~32 mA | ~17 days |
+| **3V3/STD_ALONE, 15-min, today's wiring** | ~3.3 mA *(floor ~3 mA est.: divider 1.7 + INA219 ~1)* | **~5½ months** |
+| + divider on VSENS, INA sleep-mode | ~0.7 mA | ~1–2 years (self-discharge limits) |
+| Any setup with `R` selected (sleep blocked) | 20–119 mA | 27 → 4½ days |
+
+Three lessons: interval tuning is nearly worthless until the sleep floor is
+fixed; the ST-LINK isolation is a ~15× life multiplier by itself; and rain is
+architecturally expensive (`R` pins the node awake — fine on solar, ruinous on
+battery alone; the EXTI-wake upgrade in §10 is the designed fix). Solar
+sizing: the 3.3 mA scenario needs ~80 mAh/day — a 1–2 W panel covers it
+through a poor winter.
 
 ---
 
@@ -316,18 +406,27 @@ ring remains the card-failed fallback
 The claim discipline of this project: a thing is *verified* when it ran on the
 board and its output was recorded, and *pending* otherwise.
 
-**Verified on hardware** (transcripts in LOGBOOK §14, r6–r12): boot and config
+**Verified on hardware** (transcripts in LOGBOOK §14, r6–r26): boot and config
 restore from flash; STOP2 sleep and RTC wake with zero schedule drift; the
 config string end-to-end including all-or-nothing rejection; the 13-vector
-parser self-test and byte-exact packer self-test; AU915 transmission timing;
-LW reading live on A0; the sleep predicate correctly naming rain, and only
-rain, after the wind rework; reserved flash pages surviving re-flash.
+parser self-test and byte-exact packer self-test (fmt 0x02); AU915
+transmission timing; the sleep predicate correctly naming rain, and only rain;
+reserved flash pages surviving re-flash; the **flash ring and its CSV dump**;
+**SD CSV logging** end-to-end, including the four-fault bring-up and on-node
+`nucleo sd format` (7.5 GB card formatted in ~45 s); the **LWS** dry baseline
+(443 counts — the datasheet's own number); the **10HS** (stable driven output,
+figures verified verbatim against its manual); the **PT1000 divider**
+(19.5–20.4 °C bench); **rain** at 0.2 mm/tip (first tip read `0.20 mm`,
+miswired pin found electrically with `nucleo cshunt`); the **INA219** with
+battery V+I in every frame (4.07 V / +119 mA / SoC 86 %) and the self-healing
+I²C bus around it; the wind-direction channel reading a stable driven resting
+angle with the 3 s burst sampler running.
 
-**Pending hardware**: both BME280s and the INA219 responding on their buses
-(nothing answers yet — suspected shield seating/selector, LOGBOOK r8); the LWS
-wet/dry response; the 7911 spin and vane sweep; the offline log dump (built and
-pushed while the board was unplugged); any current measurement; TTN join and
-downlink (needs a registered key and a gateway in range).
+**Pending hardware**: the BME280 pair's marginal physical contact (the
+firmware-side wedge is fixed — what remains is copper); the LWS wet response;
+the 7911 cups-spin / vane-motion test; the per-phase current profile with the
+ST-LINK isolated (JP7/JP8 pulled, §7.6); TTN join and downlink against a real
+gateway (needs a registered key and a gateway in range).
 
 The self-test (`nucleo selftest`) exists precisely to separate "wiring wrong"
 from "firmware wrong" before either is suspected — it earned its keep by
@@ -339,23 +438,23 @@ catching a wrong byte in its own expected-frame vector.
 
 | Item | State |
 |---|---|
-| Bench calibration of every channel (Table 12 of LOGBOOK) | blocked on sensors responding |
-| Current profile (sleep / sample / TX) | not measured — top open item |
-| Node id: u16, UID-defaulted, in the identity page, on-air at offset 30 (fmt 0x02), `#N` config targeting | designed (D-10), not implemented |
+| Bench calibration of every channel (Table 12 of LOGBOOK) | partly done (rain, ST, SM, batt); remaining: BME280 pair (I²C contact), LWS wet response, wind motion |
+| Sleep-floor current with ST-LINK isolated (JP7/JP8 pulled) | not measured — top open item; procedure in §7.6 |
+| Node id: u16, UID-defaulted, in the identity page, on-air at offset 32 (fmt 0x03), `#N` config targeting | designed (D-10 as amended r22), not implemented |
 | FPort-2 diagnostic uplink; `get_config` (0x08) | not implemented |
-| SD-card mass logging | driver done; FAT layer + flash budget per LOGBOOK §12A |
-| EXTI wake-from-STOP2 wind counting (true interval mean + sleep) | upgrade path, needs RTC/LPTIM pulse timing |
-| RTC coin cell (remove SB21) | planned; firmware already prefers backup registers |
+| EXTI wake-from-STOP2 rain/wind counting (sleep with `R` selected; true interval wind mean) | upgrade path, needs RTC/LPTIM pulse timing — the fix for rain's power cost (§7.7) |
+| Flash budget | ~1.9 KB headroom after moving three files to `-Os` (r26); the squeeze pattern is established |
+| RTC coin cell (remove SB21) | planned; firmware already prefers backup registers. RTC currently loses time on full power-down — reset it each cold boot (`nucleo time is …`) |
 | TTN fair use | 1-min default is a bench setting — raise to ≥15 min for deployment |
 | Gust ≡ mean under burst sampling | accepted trade; revisit with field data |
 
 ## 11 · References
 
 Full citation table with local-copy filenames: LOGBOOK
-[§16](LOGBOOK.md#16-references) ([R1]–[R12]: UM2592, mbed board file, CubeMX
+[§16](LOGBOOK.md#16-references) ([R1]–[R13]: UM2592, mbed board file, CubeMX
 device database, ST community erratum, BME280 datasheet, MAX31865 datasheet,
 IEC 60751, Grove shield wiki, RM0453, TTN documentation, METER/Decagon LWS
-manuals, Davis DS7911).
+manuals, Davis DS7911, Decagon 10HS manual).
 
 ## Appendix — document map
 

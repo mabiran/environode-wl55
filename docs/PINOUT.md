@@ -39,7 +39,7 @@ shared SRAM2 mailbox (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 | 4 | Soil moisture | **Decagon 10HS** (3-wire analog) | **ADC_IN4** | PB2 (**A1**) | shares the Grove A0 socket with the LWS (A0+A1); output 300–1250 mV regulated; **12 mA** — power from the switched rail, never a GPIO — see [SENSORS.md](SENSORS.md) |
 | 5 | Wind **direction** | **Davis 7911** vane pot (20 kΩ) | **ADC_IN3** | PB4 (**A3**) | green = wiper; 0 Ω = N, 10 k = S; 1 MΩ pull-down for the dead band |
 | 6 | Battery voltage | resistor divider | **ADC_IN0** | PB13 (**A5**) | fallback; primary is the INA219 bus voltage. Moved off A4 to free it for wind speed |
-| 6b | Battery V + I | INA219 | **I²C2** | PA12/PA11 | addr `0x45`, R_shunt 0.1 Ω *(reused)* |
+| 6b | Battery V + I | INA219 | **I²C2** | PA12/PA11 | addr `0x40` as fitted (init probes `0x45` then `0x40`), R_shunt 0.1 Ω |
 | 7 | Soil temperature | **PT1000 RTD**, ~900 Ω divider off 3V3 | **ADC_IN6** | PA10 (**A2**) | ratiometric (`R = Rs·c/(4095−c)`); pin muxed from I²C1 SDA per read — **`T2` unusable while fitted**. MAX31865 variant dropped 2026-08-13 |
 | 7b | Offline CSV log | **SD card** (SPI mode) | **SPI1** | PA5 SCK / PA6 MISO / PA7 MOSI, **CS PB8 (D5)** | mode 0, init ≤400 kHz then 2 MHz; ~10 k pull-up on CS; FAT32 ≤32 GB; 3V3 direct (12–35 mA writes) |
 | 8 | Rain | tipping-bucket reed | **GPIO EXTI3** | PB3 (D3) | pull-up, falling edge, SW debounce |
@@ -47,7 +47,8 @@ shared SRAM2 mailbox (see [ARCHITECTURE.md](ARCHITECTURE.md)).
 | — | LoRaWAN | SubGHz (internal) | **CM0+ radio core** | — | AU915 FSB2 (match TTN) |
 | — | Debug console | USART2 → ST-Link VCP | — | PA2 TX / PA3 RX | 115200 8N1, command server *(reused)* |
 | — | Aux console | USART1 | — | PB6 TX (D1) / PB7 RX (D0) | mirrored command server *(reused)* |
-| — | Status LED | external LED | GPIO out | PC2 (D8) | brief low-duty pulses *(reused)* |
+| — | **Status LED** (power button) | external LED + ~470 Ω | GPIO out | **PB10 (D6)** | blink language — solid=boot, 1/2/3 flashes = ok/no-join/fault, dark=asleep (LOGBOOK Table 9a) |
+| — | Legacy status LED | external LED | GPIO out | PC2 (D8) | brief low-duty pulses *(reused)* |
 | — | RF front-end | board RF switch | GPIO out | PC3/PC4/PC5 | **do not touch** (FE_CTRL1..3) |
 | — | Timekeeping / wake | RTC (LSE) | internal | PC14/PC15 | periodic sample/uplink wake |
 
@@ -65,12 +66,13 @@ measurements. Enable pin: **PB5 = Arduino D4**, settle 15 ms, then convert
 | On VSENS | Draw while excited |
 |---|---|
 | Decagon LWS excitation | ~4 mA |
+| Decagon 10HS excitation | ~12 mA (its regulator needs ≥3.0 V — rail or 3V3, never a GPIO) |
 | Davis 7911 direction pot (yellow) | 165 µA (3.3 V / 20 kΩ) |
 | future powered analog probes | — |
 
-Continuous ≈ **101 mAh/day**. Pulsed 15 ms per cycle at 15 min ≈ **0.002 mAh/day**
-— about five orders of magnitude, and the LWS manual *requires* pulsed excitation
-anyway.
+Continuous ≈ **390 mAh/day** with all three. Pulsed 15 ms per cycle at 15 min ≈
+**0.007 mAh/day** — about five orders of magnitude, and the LWS manual
+*requires* pulsed excitation anyway.
 
 **Switch the HIGH side, never the low side.** A single NPN in the ground return is
 the obvious one-transistor circuit and it is wrong here: it lifts each sensor's
@@ -118,12 +120,22 @@ because it uses the NPN most people already have; Option B is the better circuit
 |---|---|---|
 | **47 kΩ** | A4 → 3V3 | pull-up for the speed contact. A4 is an ADC input now, so the internal pull-up is unavailable — this resistor is **required**, not optional. 47 kΩ halves the closed-contact current versus 10 kΩ while staying stiff enough for the 12 m cable |
 | 1 MΩ | A3 → GND | pins the vane's dead band to ~0 V = north instead of letting the wiper float. 100 kΩ would skew mid-scale readings by ~17° |
-| 100 nF *(optional)* | A4 → GND | RC debounce, ~1 ms with the 10 kΩ — well under the 5 ms software debounce |
+
+> **No debounce capacitor on A4.** An earlier revision suggested an optional
+> 100 nF — with the 47 kΩ pull-up that is RC ≈ 4.7 ms, which at the sensor's
+> 88 Hz ceiling (5.7 ms half-period) would keep the line from ever crossing the
+> sampling hysteresis and silently cap recordable wind speed. The software
+> hysteresis + 5 ms debounce handle bounce on their own.
 
 ## Free pins (room for the sensors added later)
 
 `PB12` (D2) · `PA15` · `PA0` · `PA1` ·
-`PA8` · `PB15` · `PC0` · `PC6` · `PB10` (D6) · `PC1` (D7).
+`PA8` · `PB15` · `PC0` · `PC6` · `PC1` (D7). `PB10` (D6) became the status
+LED on 2026-08-18 (blink language: LOGBOOK Table 9a).
+
+`PA4` (D10) is **parked, not free** — gpio.c still drives it output-HIGH as the
+dropped MAX31865's chip-select (ENV_RTD_CS); reclaim it by removing that init
+before attaching anything to D10.
 
 `PB5` (D4) is the switched-rail enable (VSENS). `PB8` (D5) became the SD card's
 chip-select on 2026-08-13 — the pigtail's CS wire was soldered there (one

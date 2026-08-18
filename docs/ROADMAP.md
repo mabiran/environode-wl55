@@ -11,8 +11,11 @@ at every step (`flash.ps1 -Build -NoFlash`).
 - [x] `CLAUDE.md` for session continuity; private GitHub repo + push.
 
 ## Phase 1 — Peripheral bring-up ✅ (done, hand-written — no `.ioc`)
-- [x] **I²C1** (PA9/PA10), **I²C2** (PA12/PA11), **SPI1** (PA5/6/7 + CS PA4),
-      **ADC** ×4 (PB1/PB2/PB4/PB14), **EXTI3 + EXTI5** (rain PB3, wind PB5).
+- [x] **I²C1** (PA9/PA10), **I²C2** (PA12/PA11, 100 kHz + auto-recovery since
+      r23), **SPI1** (PA5/6/7, SD CS on **PB8/D5**; PA4 parked — ex-MAX31865
+      CS), **ADC** (PB1/PB2/PA10/PB4/PB14/PB13), **EXTI3** (rain PB3 — the only
+      interrupt-counted sensor); wind speed is ADC burst-sampled on A4/PB14;
+      **PB5 = VSENS rail**, **PB10 = status LED** (r26).
 - [x] GPIO map locked in `docs/PINOUT.md` against UM2592 Table 17 + the mbed
       NUCLEO_WL55JC board file (which also corrects UM2592's "I2C1" mislabel on
       D14/D15 — those pins are I²C2).
@@ -24,14 +27,19 @@ at every step (`flash.ps1 -Build -NoFlash`).
       compensation; auto address probe (0x76 → 0x77); one instance per bus.
 - [x] `max31865` — PT1000, 4.02 kΩ Rref, 2/3/4-wire, 50 Hz reject, bias-on →
       one-shot → bias-off per read, CVD + sub-zero polynomial, fault register.
+      *(Hardware since dropped — `ST` is now a PT1000 via ~900 Ω divider on
+      A2/PA10, ratiometric; the driver's CVD conversion is reused, r20.)*
 - [x] `analog_sensors` — 4 channels averaged ×8, divider/vane scaling.
 - [x] `pulse_counter` — split rain/wind debounce, atomic snapshot, 3 s gust
       buckets, peek-vs-consume so the console can't steal an interval.
-- [ ] Per-driver bench test on real hardware (needs the sensors wired).
+- [x] Per-driver bench test on real hardware — done for SD (r18), 10HS (r19),
+      PT1000 divider (r20), rain (r21), INA219 (r22), LWS dry baseline.
+      Remaining: 7911 motion test, BME280 stable contact, LWS wet response.
 
 ## Phase 3 — Application ✅ (mostly done)
 - [x] Sampling scheduler: first frame ~60 s after boot, then every configured
-      interval (default 15 min); retries in 60 s when the radio refuses.
+      interval (default **1 min — bench value**; raise via `{…}` for the
+      field); retries in 60 s when the radio refuses.
 - [x] Payload pack → 32-byte FPort-1 frame (fmt 0x02, batt mA r22) per `docs/PAYLOAD.md`.
 - [x] Hand-off to CM0+ mailbox (CM0+ honours `mb->port`, so FPort 1 is used).
 - [ ] Verify on TTN with the JS decoder (needs hardware + gateway).

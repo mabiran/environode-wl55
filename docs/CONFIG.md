@@ -34,15 +34,20 @@ interval:= 1..999            ; minutes between measure+uplink cycles
 | `T1` | `1<<1` = 0x02 | Air temp / RH / pressure #1 | `bme280` | **I²C2** — PA12 SCL / PA11 SDA (Grove shield) | `air1_temp/rh/press` (4 / 6 / 7) | `SENS_OK_AIR1` |
 | `T2` | `1<<2` = 0x04 | Air temp / RH / pressure #2 | `bme280` | **I²C1** — PA9 SCL / PA10 SDA (board pins) | `air2_temp/rh/press` (9 / 11 / 12) | `SENS_OK_AIR2` |
 | `SM` | `1<<3` = 0x08 | Soil moisture | `analog_sensors` | ADC_IN4 — PB2 (A1) | `soil_moist` (14) | `SENS_OK_SOIL` |
-| `ST` | `1<<4` = 0x10 | Soil temperature (PT1000) | `max31865` | SPI1 — PA5/PA6/PA7, CS PA4 | `soil_temp` (18) | `SENS_OK_PT1000` |
+| `ST` | `1<<4` = 0x10 | Soil temperature (PT1000) | `analog_sensors` (~900 Ω divider) | ADC_IN6 — PA10 (**A2**), pin muxed from I²C1 SDA per read | `soil_temp` (18) | `SENS_OK_PT1000` |
 | `WS` | `1<<5` = 0x20 | Wind speed (+ gust) | `analog_sensors` (3 s ADC burst) | ADC_IN1 — PB14 (**A4**) | `wind_speed` (20), `wind_gust` (24) | `SENS_OK_WIND` |
 | `WD` | `1<<6` = 0x40 | Wind direction | `analog_sensors` | ADC_IN3 — PB4 (A3) | `wind_dir` (22) | `SENS_OK_WIND` |
 | `R`  | `1<<7` = 0x80 | Rainfall | `pulse_counter` | EXTI3 — PB3 (D3) | `rain_tips` (26), `rain_mm` (28) | `SENS_OK_RAIN` |
 
 `ALL` = 0xFF, `NONE` = 0x00.
 
-**Battery is not selectable.** `batt_mV` (offset 2, ADC_IN1 on PB14 plus the
-INA219 on I²C2) is measured and sent on every cycle regardless of the set — it is
+> ⚠️ **`ST` and `T2` are mutually exclusive in hardware** on this node: the
+> PT1000 divider occupies PA10/A2, which is also I²C1 SDA — with the divider
+> fitted, BME280 #2 cannot answer. Selecting both makes every frame raise the
+> fault bit through the failed air2 read. `{ALL,15}` therefore only makes
+> sense on a node without the divider.
+
+**Battery is not selectable.** `batt_mV` (offset 2, INA219 on I²C2 primary; divider fallback ADC_IN0 on PB13/A5) is measured and sent on every cycle regardless of the set — it is
 the one channel you cannot afford to lose remotely.
 
 **`WS` and `WD` share one status bit** (`SENS_OK_WIND`, b5). Selecting only `WD`
@@ -52,7 +57,9 @@ sets b5 from the vane read and sends the sentinel for speed/gust; selecting only
 ## Interval
 
 A bare integer, **1..999 minutes**, is the period between measure+uplink cycles.
-Default 15. Outside that range the whole frame is rejected (see below).
+Default **1** (the bench warm-test value — raise it before deployment, see the
+factory-default note below). Outside that range the whole frame is rejected
+(see below).
 
 > Every path shares this range: the brace string rejects anything outside it, and
 > the binary downlink `0x01 set_interval` (u16) plus the console `nucleo interval
@@ -90,7 +97,13 @@ A frame is rejected **in full**, with **nothing applied and no flash written**, 
 
 - contains an unknown token,
 - has missing or unbalanced braces, or nothing between them (`{}`),
-- carries an interval outside 1..999.
+- carries an interval outside 1..999,
+- combines `?` with any other token (`{?,R}` is rejected),
+- carries **two different** interval tokens (`{5,10}`; a repeated identical
+  one is tolerated),
+- has any non-whitespace text after the closing brace,
+- contains an empty token from consecutive commas (`{LW,,R}`),
+- signs an alias (`{+ALL}` / `{-NONE}` are rejected — aliases replace only).
 
 The report names the offending token, e.g.
 `ERR: config rejected -- bad token 'XX' (nothing applied)`.
@@ -138,7 +151,8 @@ so the console (`info`, `?`) can explain *why* a node will not sleep.
 > `nucleo sleep off` disables it for bench work. Details and the remaining power
 > work: [LOGBOOK.md §6.4](LOGBOOK.md#64-sleep-and-power).
 >
-> **Factory default: `{T1,T2,1}`** — the two air sensors on a 1-minute cycle,
+> **Factory default: `{LW,T1,T2,SM,1}`** — the air pair plus the Decagon LWS
+> (A0) and 10HS (A1) on a 1-minute cycle,
 > which is the first-warm-test setting. It is deliberately short so a bench
 > operator sees frames quickly; ⚠️ 1-minute uplinks exceed the TTN fair-use
 > allowance, so raise the interval before leaving a node running.
@@ -200,7 +214,7 @@ verdict; a rejected one names the offending token and changes nothing:
 ```
 > nucleo set {T1,T2,ST,60}
 ACK: config {T1,T2,ST,60} saved
-ACK: no edge-counted sensors selected: may sleep between cycles  (STOP2 sleep is Phase 5, not implemented)
+ACK: no edge-counted sensors selected: may sleep between cycles  (STOP2 between cycles, RTC wake)
 
 > {T1,XX}
 ERR: config rejected -- bad token 'XX' (nothing applied)

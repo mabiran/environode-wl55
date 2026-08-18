@@ -43,7 +43,8 @@ sensor-set config string in place of the timetable.
 STM32CubeCLT toolchain. From `CM4/EnviroNode_CM4/`:
 ```
 .\flash.ps1 -Build -NoFlash      # build both cores (CM0+ then CM4), no flash
-.\flash.ps1 -Build               # build + flash both over ST-Link (HotPlug for RDP1/flaky-NRST boards)
+.\flash.ps1                      # build + flash both (building is the DEFAULT since r23;
+                                 #  -NoBuild flashes existing ELFs, -Build is redundant)
 ```
 CMake project/target names are `EnviroNode_CM4` / `EnviroNode_CM0PLUS`. The build
 is currently green. `flash.ps1` uses connect-under-reset by default; for RDP1 or
@@ -68,8 +69,8 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
       `pulse_counter` (debounce, atomic snapshot, 3 s gust buckets).
 - [x] CM4 app samples sensors, packs the 32-byte FPort-1 frame (fmt 0x02:
       battery V **and** A from the INA219 on every frame; pack = 1S Li-ion 2P
-      13.2 Ah) and uplinks on a
-      configurable interval (default 15 min); console: `info`, `nucleo sensors`,
+      13.2 Ah) and uplinks on a configurable interval (default **1 min —
+      bench value**); console: `info`, `nucleo sensors`,
       `nucleo uplink now`, `nucleo set {…}` / bare `{…}`, `nucleo interval <min>`,
       `nucleo reset rain`.
 - [x] Downlink command table (FPort 10) wired to the CM0+ ring and auto-applied.
@@ -80,7 +81,7 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
 - [x] OTAA identity + node config persisted in **flash** (pages 62/63, reserved in
       the linker script) so the AppKey survives a full power loss.
 - [x] Pi-power / timetable / power-history code **removed** from `main.c`
-      (PB10/D6 and PC1/D7 are free). AudioMoth support is gone too.
+      (PC1/D7 free; PB10/D6 = status LED, r26). AudioMoth support is gone too.
 - [x] **STOP2 sleep implemented and hardware-verified** (`envnode_power.c`): RTC
       wake, 8 s IWDG-safe chunks, HAL tick advanced on wake. Only `R` blocks
       sleep — wind speed is ADC **burst-sampled** on A4/PB14, not edge-counted.
@@ -90,8 +91,9 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
 - [x] **SD-card CSV logging LIVE and hardware-verified** (`envnode_sdlog.c` +
       FatFs R0.12c -Os): daily `YYYYMMDD.CSV`, f_sync per row, and `CONFIG.INI`
       credentials that outrank every stored identity (field provisioning by
-      card). `nucleo sd` = status + auto-diagnostics; `nucleo cshunt`/`pinhunt`
-      = wiring bring-up aids; **FAT32 ≤32 GB only** (exFAT compiled out).
+      card). `nucleo sd` = status + auto-diagnostics; `nucleo sd format` =
+      on-node FAT32 reformat (r25); `nucleo cshunt`/`pinhunt` = wiring
+      bring-up aids; **FAT32 ≤32 GB** (or `sd format` converts bigger cards).
       Full four-fault bring-up saga: LOGBOOK r18.
 - [x] **Decagon 10HS soil moisture on A1** (in the default set `{LW,T1,T2,SM,1}`):
       300–1250 mV regulated output, 12 mA — power from the switched rail,
@@ -99,15 +101,18 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
 - [x] B1 button = sleep off (bench), B2 = sleep on (normal schedule).
 - [ ] FPort-2 diagnostic uplink (`get_config` returns ENV_NOTIMPL until then; a
       downlinked `{?}` is answered on the console only).
-- [ ] BME280s answer only intermittently on the bench (I²C contact — hardware,
-      not firmware); 7911 + 10HS not yet bench-tested; pre-r17 nodes need one
-      `nucleo log erase` (the ring moved onto dirty flash).
+- [ ] 7911 wind cups-spin / vane-motion test still pending. BME280 contact
+      issues mitigated in firmware (I²C2 @100 kHz + automatic bus recovery,
+      r23) — remaining flakiness is copper. 10HS, rain, PT1000 divider,
+      INA219 all live-verified. Pre-r17 nodes need one `nucleo log erase`.
+- [x] Status LED on D6/PB10 (r26): blink language in LOGBOOK Table 9a —
+      solid=boot, 1/2/3 flashes = joined/no-join/fault, pulse=TX, dark=asleep.
 
 ## Non-volatile layout (CM4 flash, reserved in STM32WL55JCIX_FLASH.ld)
 `FLASH` is declared as **118K** so these pages are never used by code:
 | Page | Address | Contents | Module |
 |---|---|---|---|
-| 59–61 | `0x0801D800` | **offline sensor log** — 153 timestamped 30-byte frames, ring (shrunk 7→3 pages for FatFs) | `envnode_log.c` |
+| 59–61 | `0x0801D800` | **offline sensor log** — 153 timestamped 32-byte frames (40-byte records incl. timestamp), ring (shrunk 7→3 pages for FatFs) | `envnode_log.c` |
 | 62 | `0x0801F000` | interval, calibration offsets, **sensor-set mask**, vane offset | `envnode_config.c` |
 | 63 | `0x0801F800` | AppKey / DevEUI / JoinEUI | `envnode_keystore.c` |
 The WL55 has **no USB peripheral** — the USB drive that appears when the board is
