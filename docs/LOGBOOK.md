@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r24 — 2026-08-17 |
+| **Revision** | r25 — 2026-08-18 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -790,6 +790,7 @@ command set is mirrored on USART1 (D0/D1).
 | `nucleo log dump [n]` | CSV of logged readings, newest first — save the console output as `.csv` |
 | `nucleo log erase` | wipe the offline log (do this before a deployment, and **once after updating a pre-r17 node** — the relocated ring lands on dirty flash otherwise) |
 | `nucleo sd` | probe the card + SD-log status (file, INI credentials); on failure it prints the CMD0 R1 trace and MISO pull-up test automatically |
+| `nucleo sd format` | **ERASE the card** and lay down a fresh FAT32, then remount (~1 min per 8 GB, watchdog-safe). The on-node fix for an unmountable card — and for factory-exFAT ≥64 GB cards, which it converts to usable FAT32 |
 | `nucleo pinhunt [0-7]` | bring-up aid: hold D0–D7 (or just Dn) low so a multimeter can find which header hole a mystery wire is in |
 | `nucleo cshunt` | bring-up aid: make each D pin an input with pull-down and report which reads HIGH — finds where an externally pulled-up wire (e.g. the SD CS) actually landed, no meter needed |
 | `nucleo report` | dump the persistent event log (boots, reset causes) |
@@ -1417,6 +1418,36 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-18 — `nucleo sd format`; field-power findings from UM2592 p.23 (r25)
+
+**On-node SD formatting.** `_USE_MKFS` enabled (this FatFs carries the 5-arg
+R0.13-style `f_mkfs`), `GET_SECTOR_COUNT` added to the diskio glue (mkfs needs
+the capacity; taken from the CSD at probe), and the IWDG is now fed inside
+`disk_read/disk_write` so a multi-minute format cannot trip the 15 s watchdog.
+`nucleo sd format` erases the card (CONFIG.INI included), writes MBR + FAT32
+(`FM_ANY`, auto cluster), remounts and reports. Hardware-verified: 7535 MB
+card formatted in ~45 s → `SDLOG: active`. This also makes factory-exFAT
+≥64 GB cards usable without a PC. ⚠️ **Flash budget: ~0.6 KB headroom left**
+(119.7 K text of the 118 K + gap budget) — the next feature likely needs
+another file moved to `-Os`.
+
+**Field power, from UM2592 Rev 4 page 23** (finally read from the local PDF —
+rendered via the Windows WinRT PDF engine, since it is image-only and defeats
+text extraction):
+- **STD_ALONE_5V** enters on **CN11** (2-pin header mid-board, silkscreen
+  "ALONE"): pin 1 = 5 V, pin 2 = GND; selector jumper (5V_SEL block) on
+  **ALONE**. In this mode *"the STLINK-V3E debugger is not supplied"* — the
+  LED/programmer overhead disappears without any new regulator.
+- **Zero-leak isolation**: ST recommends additionally **removing the six JP8
+  jumpers and JP7** — the debug/VCP lines between ST-LINK and WL55 — after
+  which *"there is no current leakage coming from the STLINK-V3E debugger"*.
+  Pull them for current measurements and deployment; refit for debugging.
+- Reminder from §6.4.1: USB always re-powers the ST-LINK section regardless of
+  supply mode — a dark board requires the USB lead out.
+- Caveat for a bare 1S pack into STD_ALONE_5V: the LDO needs ~3.6–3.8 V in, so
+  only the top ~half of the pack's capacity is usable. Full-range use still
+  wants a small buck into the 3V3 pin (scenario table, 2026-08-17 analysis).
 
 ### 2026-08-17 — Coulomb counter's 100 % re-anchor fixed for the 1S pack (r24)
 

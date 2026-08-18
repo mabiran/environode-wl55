@@ -2161,6 +2161,8 @@ static void Print_MessageSyntax(void)
     "nucleo log erase       (wipe the offline log)\r\n",
     "nucleo sd              (probe + SD status; on failure prints the CMD0\r\n",
     "                        R1 trace and MISO pull-up test automatically)\r\n",
+    "nucleo sd format       (ERASE the card, fresh FAT32; fixes unmountable\r\n",
+    "                        or factory-exFAT cards; takes minutes)\r\n",
     "nucleo pinhunt [0-7]   (hold D pins low for a multimeter hunt)\r\n",
     "nucleo cshunt          (input+pulldown scan: finds which D pin a\r\n",
     "                        pulled-up wire actually lands on)\r\n",
@@ -2295,6 +2297,33 @@ static void Console_HandleLine(const char *line_in) {
   /* SD card probe — the driver is programmed but nothing logs to SD yet
      (docs/LOGBOOK.md "SD-card mass logging"). Safe with no breakout wired:
      CMD0 times out and reports "no card" in ~100 ms. */
+  /* Checked before the plain "nucleosd" probe — strstr would swallow it. */
+  if (strstr(cmd, "nucleosdformat")) {
+    sd_info_t si;
+    char lm[112];
+    if (!sd_spi_probe(&si)) {
+      UART1_Send("ERR: no card answered - nothing to format (see 'nucleo sd')\r\n");
+      return;
+    }
+    snprintf(lm, sizeof(lm), "ACK: formatting %lu MB card FAT32 - ERASES EVERYTHING"
+             " (incl. CONFIG.INI). Up to a few minutes...\r\n",
+             (unsigned long)si.capacity_mb);
+    UART1_Send(lm);
+    int fr = envnode_sdlog_format();
+    if (fr == 1) {
+      UART1_Send("ACK: format complete - remounting...\r\n");
+      if (envnode_sdlog_init(&g_sd_creds)) {
+        if (g_sd_creds.has_appkey) EnvNode_ApplySdCreds(&g_sd_creds);
+      }
+      envnode_sdlog_status(lm, sizeof(lm));
+      UART1_Send(lm); UART1_Send("\r\n");
+    } else {
+      snprintf(lm, sizeof(lm), "ERR: f_mkfs failed (FRESULT %d) - card may be"
+               " write-protected or dying\r\n", -fr);
+      UART1_Send(lm);
+    }
+    return;
+  }
   if (strstr(cmd, "nucleosd")) {
     sd_info_t si;
     char lm[112];

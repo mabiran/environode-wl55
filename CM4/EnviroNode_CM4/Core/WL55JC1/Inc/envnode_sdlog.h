@@ -48,6 +48,15 @@ typedef struct {
  */
 int envnode_sdlog_init(sdlog_creds_t *creds);
 
+/**
+ * @brief  ERASE the card and lay down a fresh FAT32 (`nucleo sd format`).
+ *         Blocks for up to a few minutes on big cards (IWDG fed in diskio);
+ *         also the on-node fix for factory-exFAT ≥64 GB cards.
+ * @retval 1 on success (call envnode_sdlog_init() after to remount);
+ *         negative -FRESULT on failure.
+ */
+int envnode_sdlog_format(void);
+
 /** @brief 1 while the card is mounted and writable. */
 int envnode_sdlog_active(void);
 

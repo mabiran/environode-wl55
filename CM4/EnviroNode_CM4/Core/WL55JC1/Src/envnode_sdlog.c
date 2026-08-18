@@ -121,6 +121,23 @@ int envnode_ini_parse(const char *text, size_t len, sdlog_creds_t *creds)
 
 /* --- mount / config / append ---------------------------------------------- */
 
+int envnode_sdlog_format(void)
+{
+  /* Destructive: wipes the card (data AND CONFIG.INI) and lays down a fresh
+     FAT32. R0.12c's f_mkfs works through the registered volume's own window
+     buffer, so the volume must be registered (lazy mount) first. The IWDG is
+     fed inside disk_read/disk_write — an 8 GB card takes a minute or more. */
+  if (s_file_open) { f_close(&s_file); s_file_open = 0u; }
+  s_mounted = 0u;
+  (void)f_mount(NULL, "", 0);             /* unregister any stale mount        */
+  static BYTE wk[1024];                   /* mkfs work area (2 sectors)        */
+  /* FM_ANY: MBR partitioning, FAT type picked from the volume size (FAT32 for
+     any card ≥ ~1 GB — including factory-exFAT 64 GB cards, which this makes
+     usable). Auto cluster size. */
+  FRESULT fr = f_mkfs("", FM_ANY, 0, wk, sizeof wk);
+  return (fr == FR_OK) ? 1 : -(int)fr;    /* 1 ok; negative = -FRESULT code    */
+}
+
 int envnode_sdlog_init(sdlog_creds_t *creds)
 {
   s_mounted = 0u;
