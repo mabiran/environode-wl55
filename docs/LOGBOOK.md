@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r23 — 2026-08-17 |
+| **Revision** | r24 — 2026-08-17 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -1417,6 +1417,22 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-17 — Coulomb counter's 100 % re-anchor fixed for the 1S pack (r24)
+
+Reviewing the coulomb counter to answer "does it calibrate?": mostly yes — it
+integrates shunt current every loop pass, seeds from the resting-voltage curve
+at boot, and **re-zeros to exactly 100 % at end of charge** (voltage above the
+full threshold *and* tail current below ~C/80, held 5 s — voltage alone under
+charge proves nothing). But the end-of-charge detector still carried a local
+hardcoded `CHARGE_FULL_V = 14.2 V` — a 4S leftover the r22 constant sweep
+missed because it wasn't in `pins_config.h` — so at 1S **the re-anchor could
+never fire** and SoC_i would only ever drift down. It now uses
+`CHARGE_VOLTAGE_THRESHOLD_V` (4.15 V) and derives the tail from the pack
+(`BATTERY_NOMINAL_mAh/80` = 165 mA). Known limits, deliberately accepted for
+now: integration only runs while the CM4 is awake (a sleeping node's off-time
+is not counted), the shunt/INA219 offset is uncalibrated (±1 %-ish), and
+`used_mAh` is RAM-only (reboot falls back to the voltage seed).
 
 ### 2026-08-17 — I²C2 self-healing, 100 kHz; power stats fixed; flash.ps1 builds by default (r23)
 

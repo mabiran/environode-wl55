@@ -1939,9 +1939,11 @@ static void PowerStats_Tick(void)
 
   /* End-of-charge (tail current + high voltage). Only this condition can trip
      the dwell timer and mark the pack FULL, because a merely-high terminal
-     voltage under charge says nothing about how full the cells actually are. */
-  const float CHARGE_FULL_V  = 14.2f;       // set to your charger absorb/cv voltage
-  const float EOC_TAIL_A     = 0.15f;       // ~C/80 for 12 Ah pack ≈ 0.15 A
+     voltage under charge says nothing about how full the cells actually are.
+     Thresholds come from the pack model in pins_config.h — a hardcoded 14.2 V
+     here (4S leftover) meant the 100 % re-anchor could never fire at 1S. */
+  const float CHARGE_FULL_V  = CHARGE_VOLTAGE_THRESHOLD_V;      /* 4.15 V, 1S */
+  const float EOC_TAIL_A     = BATTERY_NOMINAL_mAh / 80.0f / 1000.0f; /* C/80 */
 
   bool end_of_charge =
       (tmp.shunt_ok) &&
