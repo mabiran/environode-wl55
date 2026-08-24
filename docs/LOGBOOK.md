@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r28 — 2026-08-24 |
+| **Revision** | r29 — 2026-08-25 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -284,10 +284,10 @@ CubeMX MCU database [[R3]](#16-references).
 | Sensor | Interface | Pins | Where it plugs in |
 |---|---|---|---|
 | BME280 #1 (`T1`) | I²C2 | PA12 SCL / PA11 SDA | Any Grove **I²C** socket on the shield |
-| BME280 #2 (`T2`) | I²C1 | PA9 SCL / PA10 SDA | Hand-wired to D9 + A2 — ⚠️ **unusable while the ST divider is fitted** (shares PA10) |
+| BME280 #2 (`T2`) | I²C1 | PA9 SCL / PA10 SDA | Hand-wired to D9 (CN5 pin 2) + A2 (CN8 pin 3) — I²C1's only header mapping; the ST divider moved off A2 for it (r28) |
 | Leaf wetness (`LW`) — **Decagon LWS** | ADC_IN5 | PB1 | **A0** (Grove A0 socket) |
 | Soil moisture (`SM`) — **Decagon 10HS** | ADC_IN4 | PB2 | **A1** (same Grove A0 socket, second signal pin) |
-| Soil temp (`ST`) — PT1000 + ~900 Ω divider | ADC_IN6, muxed from I²C1 SDA per read | PA10 | **A2** (divider top to 3V3) |
+| Soil temp (`ST`) — PT1000 + 905 Ω divider | ADC_IN11 (plain analog pin) | PA15 | **ST-morpho CN7 pin 17** (divider top to 3V3; ⚠️ pin 15 beside it = SWCLK) — *was A2 until r28* |
 | Wind direction (`WD`) | ADC_IN3 | PB4 | **A3** (Grove A3 socket) |
 | Wind speed (`WS`) | ADC_IN1, **burst-sampled** | PB14 | **A4** (same Grove A3 socket; 47 kΩ pull-up) |
 | Rain (`R`) | EXTI3, pull-up | PB3 | Grove **"D3"** socket / D3 header (8.2 kΩ external pull-up fitted) |
@@ -352,7 +352,8 @@ CubeMX MCU database [[R3]](#16-references).
 | PC1 | D7 | freed when the Pi 5 V enable was removed |
 | PA4 | D10 | **parked, not free** — gpio.c still drives it output-HIGH as the dropped MAX31865's CS; reclaim by removing that init first |
 | PB13 | A5 (ADC_IN0) | free analog channel (divider deliberately not fitted, [D-20](#15-decision-register)) |
-| PA15, PA0, PA1, PA8, PB15, PC0, PC6 | — | not on the Arduino headers |
+| PA15 | morpho CN7 pin 17 | **PT1000 divider input since r29** (ADC_IN11) |
+| PA0, PA1, PA8, PB15, PC0, PC6 | — | not on the Arduino headers |
 
 ---
 
@@ -426,7 +427,7 @@ if the sign comes out inverted either swap VIN+/VIN− or flip it in software.
 | S2 | **Davis 7911** direction → `WD` | **A3** (PB4) — *green* (wiper) | **VSENS** — *yellow* | **R2 1 MΩ** A3→GND |
 | S3 | **Davis 7911** speed → `WS` | **A4** (PB14) — *black* (contact), **ADC, burst-sampled** | — (switch to GND, *red*) | **R1 47 kΩ** A4→3V3 — **required**, the internal pull-up is unavailable on an analog pin |
 | S4 | Rain tipping bucket → `R` | **D3** (PB3) | — (switch to GND) | internal pull-up; 10 kΩ + 100 nF optional |
-| S5 | **PT1000** probe → `ST` (MAX31865 dropped r18; divider instead, r20) | **A2** (PA10) — probe between A2 and GND | — | **~900 Ω series resistor A2→3V3** — measure it, set `ANALOG_RTD_SERIES_OHMS` (~0.26 °C/Ω). ⚠️ occupies I²C1 SDA: `T2` unusable while fitted |
+| S5 | **PT1000** probe → `ST` (MAX31865 dropped r18; divider r20; on PA15 since r29) | **ST-morpho CN7 pin 17** (PA15) — probe between pin 17 and GND (pin 19) | — | **905 Ω series resistor CN7-17→3V3** (DMM-measured) — set `ANALOG_RTD_SERIES_OHMS` (~0.26 °C/Ω). Never share it with an I²C pin (a breakout's pull-up parallels the resistor), and don't stray onto CN7 pin 15 = SWCLK |
 | S6 | Decagon **10HS** soil moisture → `SM` | **A1** (PB2) — *red* wire | **VSENS** — *white* (**12 mA!** never a GPIO) | bare→GND; output 300–1250 mV regulated; shares the Grove A0 socket with S1 |
 | S7 | **SD-card breakout** (3.3 V-native) | SCK **D13**, MISO **D12**, MOSI **D11**, CS **D5** (PB8) | 3V3 direct, **not** VSENS | ~10 kΩ pull-up on CS; 100 nF + 10 µF at the breakout; FAT32 card ≤32 GB |
 | S8 | **Power-button status LED** → blink language ([Table 9a](#91-console-reference)) | **D6** (PB10) — anode via ~470 Ω | — | cathode → GND; dark = asleep is the design |
@@ -1578,6 +1579,25 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-25 — PT1000 divider settles on PA15 (CN7 pin 17); first all-green frame (r29)
+
+The A2 conflict's resolution wandered: an attempt on **A5/PB13** read a hard
+0 V (only a ground path on the pin; root cause not conclusively established —
+suspected the resistor leg never reached the pin) before the build settled on
+**PA15 = ST-morpho CN7 pin 17 (ADC_IN11)**, chosen from UM2592 Table 18.
+`ENVNODE_RTD_PIN` (analog_sensors.h) now selects between A2 (0, muxed legacy),
+A5 (1) and PA15 (2, as built); on PA15 the pin is forced from its JTDI-with-
+pull-up reset state to analog before each read — a pull-up here would corrupt
+the divider exactly as the BME's did on A2. ⚠️ CN7 pin 15, one hole away, is
+SWCLK.
+
+Result, immediately: `temp 19.81 °C (rtd raw 2231)` — the count predicted for
+a PT1000 at room temperature — with `air2` reading alongside, and the node's
+**first-ever all-green frame: `status 0x7F`**, every sensor OK, no fault bit,
+battery 3.95 V / SoC 70 % (both estimators agreeing). The `(rtd raw N)`
+console diagnostic added during this hunt stays: ~2230 = room temp, ~4095 =
+open probe, ~0 = no path to 3V3.
 
 ### 2026-08-24 — First full-system test in the enclosure: every sensor wired (r28)
 

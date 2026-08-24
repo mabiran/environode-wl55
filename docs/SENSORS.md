@@ -175,7 +175,10 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
   electrical zero to true/magnetic north.
 
 ## 7 · Soil temperature — **PT1000 divider on A2** (`analog_sensors.{h,c}`)
-- **Config key:** `ST`. **Pin:** ADC_IN6 — PA10, Arduino **A2**.
+- **Config key:** `ST`. **Pin:** ADC_IN11 — PA15, **ST-morpho CN7 pin 17**,
+  since r29 (`ENVNODE_RTD_PIN 2`; ⚠️ CN7 pin 15 next door is SWCLK). The
+  firmware also supports A5/PB13 (`1`) and the original A2/PA10 (`0`) — A2
+  shares I²C1 SDA, see the warning below.
 - **Interface — no front-end chip at all** (the MAX31865 was dropped,
   LOGBOOK r18): a plain resistor divider, hardware-verified 2026-08-13 at
   19.5–20.4 °C on the bench (LOGBOOK r20).
@@ -197,9 +200,11 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
   is electrically unusable (the divider holds SDA at ~1.9 V, below the
   BME280's V_IH), **and the BME280's SDA pull-up corrupts the divider** (it
   parallels the 900 Ω: 20 °C read as 58 °C in the r28 enclosure test).
-  **Recommended wiring: A5 (PB13/ADC_IN0) instead** — a free, plain analog
-  pin; set `ENVNODE_RTD_ON_A5 1` in `analog_sensors.h`. Then `T2` and `ST`
-  coexist and no pin muxing happens.
+  **As-built wiring: PA15 (ST-morpho CN7 pin 17, ADC_IN11)** —
+  `ENVNODE_RTD_PIN 2` in `analog_sensors.h`. Then `T2` and `ST` coexist and no
+  pin muxing happens. (A5/PB13 is the on-header alternative, `ENVNODE_RTD_PIN
+  1`; a bench attempt on A5 read 0 V — cause not established — before the
+  build settled on PA15, r28/r29.)
 - **Fault detection:** open probe → the series R pulls A2 to the rail
   (counts ≥ 4050 rejected); shorted probe → counts ≤ 50 rejected; anything
   outside −60…120 °C rejected. All raise the normal `ST` fault path.

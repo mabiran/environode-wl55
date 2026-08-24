@@ -73,11 +73,13 @@ extern "C" {
  * @{ */
 #define ANALOG_RTD_SERIES_OHMS  (900.0f)  /*!< measure yours with a DMM        */
 
-/** Where the divider's A-pin leg is wired. 0 = A2/PA10 (original, shares
- *  I²C1 SDA — T2 and ST cannot coexist, and a BME280's SDA pull-up corrupts
- *  the reading). 1 = **A5/PB13** (ADC_IN0, a plain analog pin: no conflict,
- *  no muxing; frees I²C1 for T2). Move the one wire, flip this, rebuild. */
-#define ENVNODE_RTD_ON_A5       (0)
+/** Where the divider's junction leg is wired. Move the wire, set this, rebuild:
+ *    0 = A2 / PA10  (ADC_IN6, muxed from I²C1 SDA per read — conflicts with
+ *        T2: a BME280's SDA pull-up parallels the series resistor)
+ *    1 = A5 / PB13  (ADC_IN0, plain analog pin on the Arduino header)
+ *    2 = PA15 / ST-morpho **CN7 pin 17** (ADC_IN11) — as built since r29.
+ *        Mind CN7 pin 15 next door: that is SWCLK. */
+#define ENVNODE_RTD_PIN         (2)
 
 /** The A5 battery resistor divider is deliberately not fitted (D-20 — the
  *  INA219 is the battery source). Leave 0 unless one is populated; with the
@@ -133,6 +135,10 @@ float analog_get_winddir_offset(void);
  *         rail), shorted (counts near 0), or the result is outside −60…120 °C.
  */
 env_status_t analog_rtd_a2_celsius(float *t_c);
+
+/** Raw ADC counts from the last PT1000 divider conversion — printed by the
+ *  console so an open (≈4095) or shorted (≈0) probe is obvious. */
+uint16_t analog_rtd_last_raw(void);
 
 #ifdef __cplusplus
 }

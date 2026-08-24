@@ -1079,11 +1079,15 @@ static void EnvNode_SampleAndPrint(void)
 
   /* The 10HS is specified in mV (300 dry-air .. 1250 saturated, regulated
      output) — print both so a reading can be checked against the datasheet. */
-  snprintf(line, sizeof(line), "soil : %u counts = %u mV [%s]  temp %.2f C [%s]\r\n",
+  /* The divider's raw counts ride along so a wiring fault is self-evident:
+     ~2230 = PT1000 at room temp, ~4095 = open probe (only the resistor is on
+     the pin), ~0 = only the probe is on the pin. */
+  snprintf(line, sizeof(line), "soil : %u counts = %u mV [%s]  temp %.2f C [%s] (rtd raw %u)\r\n",
            (unsigned)r.soil_moist_raw,
            (unsigned)(((uint32_t)r.soil_moist_raw * 3300u) / 4095u),
            (r.status & SENS_OK_SOIL) ? "ok" : "FAIL",
-           r.soil_temp_c, (r.status & SENS_OK_PT1000) ? "ok" : "RTD FAIL");
+           r.soil_temp_c, (r.status & SENS_OK_PT1000) ? "ok" : "RTD FAIL",
+           (unsigned)analog_rtd_last_raw());
   UART1_Send(line);
 
   /* The Decagon LWS is specified in millivolts, so print both: counts are what

@@ -190,6 +190,10 @@ float analog_get_winddir_offset(void)
   return s_winddir_offset_deg;
 }
 
+static uint16_t s_rtd_last_raw;   /* console diagnostic: what the pin saw */
+
+uint16_t analog_rtd_last_raw(void) { return s_rtd_last_raw; }
+
 env_status_t analog_rtd_a2_celsius(float *t_c)
 {
   if (!s_ready || t_c == NULL) return ENV_ERR;
@@ -197,9 +201,22 @@ env_status_t analog_rtd_a2_celsius(float *t_c)
   uint16_t raw = 0u;
   HAL_StatusTypeDef hrc;
 
-#if ENVNODE_RTD_ON_A5
+#if ENVNODE_RTD_PIN == 2
+  /* Divider on PA15 (ST-morpho CN7 pin 17, ADC_IN11) — as built since r29.
+     PA15 resets as JTDI with a pull-up, so force analog mode once per read
+     (idempotent, and a pull-up here would corrupt the divider exactly like
+     the BME's did on A2). */
+  {
+    GPIO_InitTypeDef ga = {0};
+    ga.Pin  = GPIO_PIN_15;
+    ga.Mode = GPIO_MODE_ANALOG;
+    ga.Pull = GPIO_NOPULL;
+    HAL_GPIO_Init(GPIOA, &ga);
+  }
+  hrc = ADC_ReadChannelAvg(ADC_CHANNEL_11, ANALOG_OVERSAMPLES, &raw);
+#elif ENVNODE_RTD_PIN == 1
   /* Divider on A5 (PB13, ADC_IN0): a plain analog pin, no I2C1 conflict, no
-     muxing — the recommended wiring since r28. */
+     muxing. */
   hrc = ADC_ReadChannelAvg(ADC_CHANNEL_0, ANALOG_OVERSAMPLES, &raw);
 #else
   /* Legacy A2 wiring. A2 (PA10) normally belongs to I2C1 as SDA. Borrow it:
@@ -223,6 +240,7 @@ env_status_t analog_rtd_a2_celsius(float *t_c)
 #endif
 
   if (hrc != HAL_OK) return ENV_ERR;
+  s_rtd_last_raw = raw;
 
   /* Open probe: the series resistor pulls the pin to the rail. Short: to GND.
      Both would divide by ~0 or produce nonsense — reject before the math. */
