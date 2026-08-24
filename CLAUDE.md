@@ -10,9 +10,9 @@ on **two separate I²C buses**), soil moisture (**Decagon 10HS**, ADC A1), leaf
 wetness (**Decagon LWS**, ADC A0), battery (INA219, I²C), wind direction (Davis
 7911 vane pot, ADC A3), rainfall (tipping-bucket pulse count), wind speed
 (7911 contact, ADC burst-sampled on A4), and soil temperature (`ST`, **PT1000
-via a ~900 Ω divider on A2/PA10** — ratiometric, pin muxed from I²C1 SDA per
-read, so `T2` is unusable while the divider is fitted; the MAX31865 is
-dropped). Uplinks a compact frame; accepts downlink config.
+via a 905 Ω divider on PA15 / morpho CN7 pin 17** — ratiometric, plain analog
+pin since r29; on A2 it had fought I²C1/T2; the MAX31865 is dropped).
+Uplinks a compact frame; accepts downlink config.
 Which sensors run, and how often, is set by one ASCII **sensor-set config string**
 in braces — `{T1,T2,ST,60}` — over downlink or console (`docs/CONFIG.md`).
 
@@ -105,9 +105,10 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
       issues mitigated in firmware (I²C2 @100 kHz + automatic bus recovery,
       r23). 10HS, rain, PT1000 divider, INA219 all live-verified.
       **`nucleo log erase` once after any record-format change** (r22 got
-      this wrong — writes onto stale slots fail). **ST divider on A2
-      conflicts with T2 (BME #2's pull-up corrupts it, r28) — move it to A5
-      and set `ENVNODE_RTD_ON_A5 1`.**
+      this wrong — writes onto stale slots fail). **ST divider now on PA15,
+      morpho CN7 pin 17 (`ENVNODE_RTD_PIN 2`, r29)** — on A2 it shared I²C1
+      SDA and BME #2's pull-up corrupted it; T2 and ST now coexist. First
+      all-green frame (status 0x7F) recorded 2026-08-25.
 - [x] Status LED on D6/PB10 (r26): blink language in LOGBOOK Table 9a —
       solid=boot, 1/2/3 flashes = joined/no-join/fault, pulse=TX, dark=asleep.
 
