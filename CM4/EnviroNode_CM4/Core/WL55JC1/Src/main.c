@@ -1965,9 +1965,14 @@ static void PowerStats_Tick(void)
   const float CHARGE_FULL_V  = CHARGE_VOLTAGE_THRESHOLD_V;      /* 4.15 V, 1S */
   const float EOC_TAIL_A     = BATTERY_NOMINAL_mAh / 80.0f / 1000.0f; /* C/80 */
 
+  /* "Tail" means the CHARGER's current has tapered: net shunt current must be
+     charging (negative) or ~zero. A plain |I| test marked the pack FULL on the
+     bench while it was DISCHARGING 108 mA at 4.2 V (r28) — right by accident,
+     wrong in principle. +20 mA of slack covers shunt/INA219 offset. */
   bool end_of_charge =
       (tmp.shunt_ok) &&
       (tmp.v_src >= CHARGE_FULL_V) &&
+      (tmp.current <= 0.020f) &&
       (fabsf(tmp.current) <= EOC_TAIL_A);
 
   if (end_of_charge) {

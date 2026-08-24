@@ -194,9 +194,12 @@ brace configuration string, e.g. `{T1,T2,ST,60}`.
   resistor with a DMM and set the constant to that value**; fine-trim with
   `set_cal` sensor_id 7. Expect ~±0.3 °C of quantisation jitter (1 count).
 - **⚠️ A2 is I²C1 SDA** — BME280 #2's bus. While the divider is fitted, `T2`
-  is electrically unusable (the divider holds SDA at ~1.8 V). The firmware
-  muxes PA10 to analog only for the conversion and returns it to I²C1 after,
-  so removing the divider restores `T2` with no firmware change.
+  is electrically unusable (the divider holds SDA at ~1.9 V, below the
+  BME280's V_IH), **and the BME280's SDA pull-up corrupts the divider** (it
+  parallels the 900 Ω: 20 °C read as 58 °C in the r28 enclosure test).
+  **Recommended wiring: A5 (PB13/ADC_IN0) instead** — a free, plain analog
+  pin; set `ENVNODE_RTD_ON_A5 1` in `analog_sensors.h`. Then `T2` and `ST`
+  coexist and no pin muxing happens.
 - **Fault detection:** open probe → the series R pulls A2 to the rail
   (counts ≥ 4050 rejected); shorted probe → counts ≤ 50 rejected; anything
   outside −60…120 °C rejected. All raise the normal `ST` fault path.

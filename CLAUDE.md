@@ -103,8 +103,11 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
       downlinked `{?}` is answered on the console only).
 - [ ] 7911 wind cups-spin / vane-motion test still pending. BME280 contact
       issues mitigated in firmware (I²C2 @100 kHz + automatic bus recovery,
-      r23) — remaining flakiness is copper. 10HS, rain, PT1000 divider,
-      INA219 all live-verified. Pre-r17 nodes need one `nucleo log erase`.
+      r23). 10HS, rain, PT1000 divider, INA219 all live-verified.
+      **`nucleo log erase` once after any record-format change** (r22 got
+      this wrong — writes onto stale slots fail). **ST divider on A2
+      conflicts with T2 (BME #2's pull-up corrupts it, r28) — move it to A5
+      and set `ENVNODE_RTD_ON_A5 1`.**
 - [x] Status LED on D6/PB10 (r26): blink language in LOGBOOK Table 9a —
       solid=boot, 1/2/3 flashes = joined/no-join/fault, pulse=TX, dark=asleep.
 

@@ -72,6 +72,17 @@ extern "C" {
  * off by ~12 °C. Fine-trim with `set_cal` sensor_id 7 (docs/PAYLOAD.md).
  * @{ */
 #define ANALOG_RTD_SERIES_OHMS  (900.0f)  /*!< measure yours with a DMM        */
+
+/** Where the divider's A-pin leg is wired. 0 = A2/PA10 (original, shares
+ *  I²C1 SDA — T2 and ST cannot coexist, and a BME280's SDA pull-up corrupts
+ *  the reading). 1 = **A5/PB13** (ADC_IN0, a plain analog pin: no conflict,
+ *  no muxing; frees I²C1 for T2). Move the one wire, flip this, rebuild. */
+#define ENVNODE_RTD_ON_A5       (0)
+
+/** The A5 battery resistor divider is deliberately not fitted (D-20 — the
+ *  INA219 is the battery source). Leave 0 unless one is populated; with the
+ *  PT1000 divider on A5 it must stay 0 or a fake voltage goes on air. */
+#define ENVNODE_BATT_DIVIDER_FITTED (0)
 /** @} */
 
 /**

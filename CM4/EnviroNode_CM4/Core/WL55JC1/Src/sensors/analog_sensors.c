@@ -96,12 +96,19 @@ env_status_t analog_read_all(uint16_t *soil_raw, uint16_t *leaf_raw, float *batt
     *leaf_raw = 0u; rc = ENV_ERR;
   }
 
-  /* Battery through the resistor divider. */
+  /* Battery through the resistor divider — only when one is actually fitted
+     (it is not, D-20: the INA219 is the battery source and A5 is free for the
+     PT1000 divider, ENVNODE_RTD_ON_A5). Reading an unfitted or repurposed A5
+     would put a fake voltage on air whenever the INA219 is absent. */
+#if ENVNODE_BATT_DIVIDER_FITTED
   if (ADC_ReadChannelAvg(ENVNODE_ADC_CH_BATT, ANALOG_OVERSAMPLES, &raw) == HAL_OK) {
     *batt_v = counts_to_v(raw) * BATT_DIVIDER_RATIO;
   } else {
     *batt_v = 0.0f; rc = ENV_ERR;
   }
+#else
+  *batt_v = 0.0f;                       /* INA219 fills this in (envnode_sensors) */
+#endif
 
   /* Wind vane potentiometer: full travel maps to a full turn, then the north
      offset is applied and the result wrapped. */
@@ -187,22 +194,33 @@ env_status_t analog_rtd_a2_celsius(float *t_c)
 {
   if (!s_ready || t_c == NULL) return ENV_ERR;
 
-  /* A2 (PA10) normally belongs to I2C1 as SDA. Borrow it: analog mode has no
-     output driver, so the swap is glitch-free for the (idle, single-threaded)
-     bus, and the AF is restored below exactly as i2c.c configured it. */
+  uint16_t raw = 0u;
+  HAL_StatusTypeDef hrc;
+
+#if ENVNODE_RTD_ON_A5
+  /* Divider on A5 (PB13, ADC_IN0): a plain analog pin, no I2C1 conflict, no
+     muxing — the recommended wiring since r28. */
+  hrc = ADC_ReadChannelAvg(ADC_CHANNEL_0, ANALOG_OVERSAMPLES, &raw);
+#else
+  /* Legacy A2 wiring. A2 (PA10) normally belongs to I2C1 as SDA. Borrow it:
+     analog mode has no output driver, so the swap is glitch-free for the
+     (idle, single-threaded) bus, and the AF is restored below exactly as i2c.c
+     configured it. ⚠️ Any I2C1 device's SDA pull-up sits in parallel with the
+     series resistor and corrupts the reading (bench: 58 °C in a 20 °C room
+     with a BME280 on I2C1, r28) — A2 and T2 cannot coexist. */
   GPIO_InitTypeDef g = {0};
   g.Pin  = GPIO_PIN_10;
   g.Mode = GPIO_MODE_ANALOG;
   g.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(GPIOA, &g);
 
-  uint16_t raw = 0u;
-  HAL_StatusTypeDef hrc = ADC_ReadChannelAvg(ENVNODE_ADC_CH_SOILTEMP, ANALOG_OVERSAMPLES, &raw);
+  hrc = ADC_ReadChannelAvg(ENVNODE_ADC_CH_SOILTEMP, ANALOG_OVERSAMPLES, &raw);
 
   g.Mode      = GPIO_MODE_AF_OD;      /* hand the pin back to I2C1 (i2c.c)     */
   g.Speed     = GPIO_SPEED_FREQ_LOW;
   g.Alternate = GPIO_AF4_I2C1;
   HAL_GPIO_Init(GPIOA, &g);
+#endif
 
   if (hrc != HAL_OK) return ENV_ERR;
 

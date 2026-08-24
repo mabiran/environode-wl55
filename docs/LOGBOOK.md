@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r27 — 2026-08-18 |
+| **Revision** | r28 — 2026-08-24 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -1578,6 +1578,57 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-24 — First full-system test in the enclosure: every sensor wired (r28)
+
+The node was powered in its package with every sensor attached and read over
+the console (`{ALL,1}` then `nucleo sensors`, `i2c scan`, `power stats`, `sd`,
+`log`). Per channel:
+
+| Channel | Result | Verdict |
+|---|---|---|
+| Boot inventory | `SENSORS: all up (air1=y air2=y rtd=y analog=y pulse=y ina219=y)` | every driver came up |
+| `T1` BME280 #1 (I²C2, 0x76) | 20.36 °C / 42.2 %RH / 1025.4 hPa, repeatable | **live** — the 100 kHz + recovery bus is solid |
+| `T2` BME280 #2 (I²C1) | boot OK, uplink-path read OK once (20.56 °C), console reads FAIL | **marginal — hardware conflict, see below** |
+| `SM` 10HS | 445 counts / 358 mV, stable | **live**, probe in air (dry) |
+| `ST` PT1000 divider | **58.5 °C** in a 20 °C room | **wrong — same conflict, see below** |
+| `LW` LWS | 446 counts / 359 mV, stable | **live** — the datasheet's 445-count dry bullseye again |
+| `WD` vane | 85.1°, stable | **live** (motion test pending) |
+| `WS` cups | 0.00 m/s, still | burst sampler runs (spin test pending) |
+| `R` bucket | 0 tips | armed (tip test pending) |
+| Battery INA219 (0x40) | 4.208 V / +108 mA discharging, SoC 100 % | **live** |
+| SD | SDHC 7535 MB, SDLOG active | **live** |
+| Flash ring | `WARN: offline log write failed` at 106/153 → healed by `nucleo log erase` | see erratum below |
+
+**Root cause of the two failures — one wire.** BME280 #2's SDA and the PT1000
+divider both sit on **A2/PA10**. Two consequences: (1) the BME280 breakout's
+SDA pull-up (~4.7 kΩ) is **in parallel with the divider's 900 Ω series
+resistor** — effective 755 Ω, which the firmware still computes as 900 Ω, so
+20 °C reads as ~58 °C, exactly what was observed; (2) the divider holds SDA at
+~1.9 V, below the BME280's V_IH (~2.3 V), so I²C1 is marginal — works
+sometimes (the uplink row read 20.56 °C), fails other times. CONFIG.md
+already declared `ST`/`T2` mutually exclusive; the enclosure build fitted
+both. **Fix: move the divider's signal leg from A2 to A5 (PB13/ADC_IN0)** —
+a plain analog pin, never used (the battery divider it was reserved for is
+not fitted, D-20), no I²C conflict, no per-read pin muxing. Firmware now
+carries `ENVNODE_RTD_ON_A5` (analog_sensors.h; default 0 = A2 until the wire
+moves) and `ENVNODE_BATT_DIVIDER_FITTED` (0 — the fallback read is compiled
+out so a repurposed A5 can never put a fake voltage on air).
+
+**Erratum to r22:** "old flash-ring records age out via checksum, no erase
+needed" was **wrong**. Invalid-checksum slots still hold non-0xFF flash, and a
+write onto them fails — `WARN: offline log write failed` appeared mid-ring.
+Rule, now firm: **after any change to the record format, run
+`nucleo log erase` once** (same as after the r17 relocation).
+
+**Coulomb-counter fix:** end-of-charge used `|I| ≤ C/80`, so a pack sitting
+at 4.2 V while *discharging* 108 mA was marked FULL — right by accident. The
+tail test now also requires net current ≤ +20 mA (charging or ~zero).
+
+Pending from this session: cups-spin, vane-motion, bucket-tip and leaf-wet
+dynamic tests; the A2→A5 wire move; RTC lost time again on this power-up
+(01/01/2025 until set) — the ring-seed / DeviceTimeReq / coin-cell plan
+stands.
 
 ### 2026-08-18 — Thesis-grade handover sweep, audited corpus-wide (r27)
 
