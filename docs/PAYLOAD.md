@@ -84,6 +84,33 @@ function decodeUplink(input) {
 }
 ```
 
+### TTN downlink encoder (optional — lets you type JSON instead of hex)
+
+Payload formatters → Downlink → Custom Javascript. TTN runs formatters in
+**goja**, which has no `TextEncoder`/`Buffer` — build byte arrays by hand:
+
+```js
+function encodeDownlink(input) {
+  // {"config":"{15}"}  -> ASCII bytes of the string on FPort 1
+  //                      (the node treats any downlink starting with "{" as a config string)
+  if (input.data && typeof input.data.config === "string") {
+    return { bytes: input.data.config.split("").map(c => c.charCodeAt(0) & 0xFF), fPort: 1 };
+  }
+  // {"cmd":1,"arg":15} -> binary command on FPort 10: id + little-endian u16 argument
+  if (input.data && Number.isInteger(input.data.cmd)) {
+    const b = [input.data.cmd & 0xFF];
+    if (Number.isInteger(input.data.arg)) b.push(input.data.arg & 0xFF, (input.data.arg >> 8) & 0xFF);
+    return { bytes: b, fPort: 10 };
+  }
+  return { bytes: [], fPort: 1, errors: ["need {config:\"{...}\"} or {cmd:n[,arg:n]}"] };
+}
+```
+
+Verified on TTN 2026-08-25: `{"cmd":1,"arg":15}` → `01 0F 00` on FPort 10.
+(A first draft used `TextEncoder` and threw `ReferenceError` in the console's
+test panel — goja has no Web APIs.) First OTAA join of this node succeeded
+the same day, DevEUI `0080E115061BF803`, application `geoenvironode`.
+
 ### Auxiliary uplinks
 
 **Live today (inherited KoreroNet power frames, sent on the radio core's
