@@ -106,6 +106,17 @@ function encodeDownlink(input) {
 }
 ```
 
+TTN also runs a `decodeDownlink` on every outgoing downlink for display and
+logs `ReferenceError: decodeDownlink is not defined` if it is missing —
+cosmetic, but add this stub below the encoder to keep Live data clean:
+
+```js
+function decodeDownlink(input) {
+  return { data: { fPort: input.fPort, bytes: input.bytes,
+                   text: input.bytes.map(b => String.fromCharCode(b)).join("") } };
+}
+```
+
 Verified on TTN 2026-08-25: `{"cmd":1,"arg":15}` → `01 0F 00` on FPort 10.
 (A first draft used `TextEncoder` and threw `ReferenceError` in the console's
 test panel — goja has no Web APIs.) First OTAA join of this node succeeded

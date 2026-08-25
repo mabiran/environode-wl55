@@ -12,7 +12,7 @@ did, what is proven, and what remains open.
 
 | | |
 |---|---|
-| Revision | m2 — 2026-08-18, tracks LOGBOOK r26 |
+| Revision | m3 — 2026-08-25, tracks LOGBOOK r30 |
 | Author | Mabiran (AUT University, Ecology Project) with Claude (Anthropic) as firmware co-author |
 | Platform | NUCLEO-WL55JC1 (STM32WL55JC) · Grove Base Shield V2 · LoRaWAN AU915 / The Things Network |
 

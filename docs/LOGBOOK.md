@@ -12,11 +12,11 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r29 — 2026-08-25 |
+| **Revision** | r30 — 2026-08-25 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
-| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS**, **PT1000 divider**, **rain (0.2 mm/tip)**, **INA219 (4.07 V / +119 mA / SoC 86 %, self-healing bus)**, flash ring, **SD CSV logging** and on-node **`sd format`** all verified on the board. **Joined TTN 2026-08-25** (application `geoenvironode`). Wind cups/vane motion test still pending. See [§14](#14-build-log) r18–r27 |
+| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS**, **PT1000 divider**, **rain (0.2 mm/tip)**, **INA219 (4.07 V / +119 mA / SoC 86 %, self-healing bus)**, flash ring, **SD CSV logging** and on-node **`sd format`** all verified on the board. **Joined TTN 2026-08-25** (application `geoenvironode`, gateway `geoenvirosense01`): uplinks decoded, `{15}` downlink applied end to end. Wind cups/vane motion test still pending. See [§14](#14-build-log) r18–r27 |
 | **Repository** | `Hardware/EnviroNode-WL55` (private) |
 
 ---
@@ -1583,6 +1583,35 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-25 — First end-to-end LoRaWAN: join, decoded uplinks, downlink applied (r30)
+
+**The network path is proven.** With the device registered on TTN (application
+`geoenvironode`, device `envnode-01`, cluster `au1`) the node joined on its
+own retry loop and uplinked every cycle. Received by the project's own gateway
+**`geoenvirosense01`** (EUI `AC1F09FFFE1882E9`), RSSI −89…−95 dBm, SNR
+6–12.5 dB, SF7BW125 on 916.8 MHz, ~92 ms airtime — the network chose DR5 via
+ADR. The TTN uplink formatter decoded every field as expected (batt 4.196 V,
+−672 mA charging, air1/air2 ≈ 20.5 °C, soil 445, leaf 442, vane 70.4°).
+
+**Remote control works end to end.** A `{"config":"{15}"}` downlink queued in
+the console was delivered in the RX1 window after the next uplink and the
+node **applied it**: the uplink cadence went from ~63 s to exactly 15 min 3 s.
+A `{?}` downlink followed. (One `{15}` was queued twice by the browser agent —
+idempotent, harmless; a MAC-only uplink 5 s after the first downlink is the
+stack answering network MAC commands — normal.) Class A consequence, seen
+live: after `{15}` the next downlink waited ~14 min for a transmit window.
+
+**Bench notes from the same session.** Every frame carried `fault = true`
+(status `0xEF`): `ST` is selected but the PT1000 divider on PA15 has been
+reading 1.15 V instead of 1.80 V since a charger was connected (suspected
+ground-path IR drop through the charge current; DMM check pending) — the
+node is honest about it, as designed. An API key with *view devices / read
+traffic / write downlink* rights and the MQTT endpoint
+(`au1.cloud.thethings.network:8883`, user `geoenvironode@ttn`) were created;
+**the key is deliberately not recorded in this repository.** TTN's formatter
+runtime (goja) has no `TextEncoder` — the encoder in PAYLOAD.md is the
+goja-safe version, plus a `decodeDownlink` stub TTN expects.
 
 ### 2026-08-25 — PT1000 divider settles on PA15 (CN7 pin 17); first all-green frame (r29)
 
