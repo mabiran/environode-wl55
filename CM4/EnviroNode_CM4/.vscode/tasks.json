@@ -1,0 +1,41 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Build only",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-ExecutionPolicy", "Bypass", "-NoProfile",
+                "-File", "${workspaceFolder}\\flash.ps1",
+                "-Build", "-NoFlash"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "Flash only (board must be connected)",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-ExecutionPolicy", "Bypass", "-NoProfile",
+                "-File", "${workspaceFolder}\\flash.ps1"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "Build + Flash",
+            "type": "shell",
+            "command": "powershell",
+            "args": [
+                "-ExecutionPolicy", "Bypass", "-NoProfile",
+                "-File", "${workspaceFolder}\\flash.ps1",
+                "-Build"
+            ],
+            "problemMatcher": []
+        }
+    ]
+}
