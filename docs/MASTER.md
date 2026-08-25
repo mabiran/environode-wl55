@@ -425,8 +425,7 @@ angle with the 3 s burst sampler running.
 **Pending hardware**: the BME280 pair's marginal physical contact (the
 firmware-side wedge is fixed — what remains is copper); the LWS wet response;
 the 7911 cups-spin / vane-motion test; the per-phase current profile with the
-ST-LINK isolated (JP7/JP8 pulled, §7.6); TTN join and downlink against a real
-gateway (needs a registered key and a gateway in range).
+ST-LINK isolated (JP7/JP8 pulled, §7.6); the wind cups-spin / vane-motion test only — **TTN join, decoded uplinks and an applied `{15}` downlink were all verified on 2026-08-25** through the project gateway `geoenvirosense01` (LOGBOOK r30).
 
 The self-test (`nucleo selftest`) exists precisely to separate "wiring wrong"
 from "firmware wrong" before either is suspected — it earned its keep by

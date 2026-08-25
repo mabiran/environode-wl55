@@ -101,6 +101,8 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
 - [x] B1 button = sleep off (bench), B2 = sleep on (normal schedule).
 - [ ] FPort-2 diagnostic uplink (`get_config` returns ENV_NOTIMPL until then; a
       downlinked `{?}` is answered on the console only).
+- [x] **LoRaWAN end to end verified 2026-08-25** (TTN app `geoenvironode`, gateway
+      `geoenvirosense01`): join, decoded uplinks, `{15}` downlink applied (r30).
 - [ ] 7911 wind cups-spin / vane-motion test still pending. BME280 contact
       issues mitigated in firmware (I²C2 @100 kHz + automatic bus recovery,
       r23). 10HS, rain, PT1000 divider, INA219 all live-verified.

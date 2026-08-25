@@ -42,7 +42,8 @@ at every step (`flash.ps1 -Build -NoFlash`).
       field); retries in 60 s when the radio refuses.
 - [x] Payload pack → 32-byte FPort-1 frame (fmt 0x02, batt mA r22) per `docs/PAYLOAD.md`.
 - [x] Hand-off to CM0+ mailbox (CM0+ honours `mb->port`, so FPort 1 is used).
-- [ ] Verify on TTN with the JS decoder (needs hardware + gateway).
+- [x] Verified on TTN 2026-08-25: decoded uplinks via gateway geoenvirosense01,
+      `{15}` downlink applied end to end (LOGBOOK r30).
 - [x] AudioMoth paths removed.
 - [x] **Pi-power / recording-timetable / power-history code removed from
       `main.c`.** No Raspberry Pi, no audio, no timetable anywhere in this
