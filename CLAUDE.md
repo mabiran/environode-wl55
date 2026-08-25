@@ -152,3 +152,8 @@ sectors the ELF covers, so re-flashing the app keeps both pages.
   command — never on a timer or inside a LoRaWAN RX window.
 - Match TTN region settings (KoreroNet used **AU915 FSB2**) to your gateway.
 - Do **not** modify the sibling KoreroNet repo from here.
+- **The repo lives inside OneDrive.** Keep it pinned *Always keep on this
+  device*; if git prints `fatal: mmap failed: Invalid argument`, `.git` has
+  dehydrated placeholders — do not retry blindly (LOGBOOK r29 incident:
+  a bad commit `a15083c` got pushed that way). Temp clones need
+  `core.longpaths=true` and a short path such as `C:nvnode-tmp`.

@@ -1599,6 +1599,20 @@ battery 3.95 V / SoC 70 % (both estimators agreeing). The `(rtd raw N)`
 console diagnostic added during this hunt stays: ~2230 = room temp, ~4095 =
 open probe, ~0 = no path to 3V3.
 
+**Incident, same day — OneDrive broke the repository.** Committing r29 hit
+`fatal: mmap failed: Invalid argument` on `git add`/`push`: OneDrive had
+dehydrated **255 files inside `.git`** to cloud placeholders and its file
+provider was erroring ("The cloud file provider exited unexpectedly"), so
+git could not read its own object store. A push from a hastily-made temp
+clone whose checkout had failed on Windows MAX_PATH produced a bad commit
+(`a15083c`, 603 deletions) — **do not check that commit out**; `75f8ea4`
+immediately restores the full tree and is content-identical to the bench
+working tree. The OneDrive repo's `.git` was then replaced by a healthy
+clone's (old one kept as `.git.broken-20260825`). **Rules that follow:**
+right-click the repo folder → *Always keep on this device*; if git ever
+reports `mmap failed`, stop and hydrate/replace `.git` rather than retrying;
+any temp clone on Windows needs `core.longpaths=true` and a short path.
+
 ### 2026-08-24 — First full-system test in the enclosure: every sensor wired (r28)
 
 The node was powered in its package with every sensor attached and read over
