@@ -819,10 +819,14 @@ what a "power-cycle test" is actually proving.
 > hard-coded FSB2 channel mask in `LoRaWAN/App/lora_app.c` (~lines 449–462;
 > channels 8–15 + 65). All three must agree with the gateway.
 >
-> **Network infrastructure** *(to be recorded by the project owner)*: TTN
-> application ID, the account it lives under, and the gateway plan (hardware,
-> location, administrator). No join has succeeded yet — there has been no
-> gateway in range of the bench.
+> **Network infrastructure**: TTN application **`geoenvironode`** (created
+> 2026-08-25 under the project owner's account); first end device = this
+> node, DevEUI `0080E115061BF803`, JoinEUI all-zero, LoRaWAN 1.0.4 /
+> RP002-1.0.3 / AU915 FSB2. A real AppKey was generated and provisioned into
+> the node over the console on 2026-08-25 (flash + backup registers; the key
+> itself is deliberately not recorded here — `info` prints it). Gateway plan
+> (hardware, location, administrator): still to be recorded; no join has
+> succeeded yet.
 
 **Procedure 8.2 — Load the keys into the node**
 
