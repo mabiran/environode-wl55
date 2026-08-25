@@ -16,7 +16,7 @@
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
-| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS**, **PT1000 divider**, **rain (0.2 mm/tip)**, **INA219 (4.07 V / +119 mA / SoC 86 %, self-healing bus)**, flash ring, **SD CSV logging** and on-node **`sd format`** all verified on the board. Wind cups/vane motion test and gateway join still pending. See [§14](#14-build-log) r18–r27 |
+| **Field state** | **Running on hardware.** Boot, config, STOP2 sleep/wake, console, self-test, LWS (443 counts dry), **10HS**, **PT1000 divider**, **rain (0.2 mm/tip)**, **INA219 (4.07 V / +119 mA / SoC 86 %, self-healing bus)**, flash ring, **SD CSV logging** and on-node **`sd format`** all verified on the board. **Joined TTN 2026-08-25** (application `geoenvironode`). Wind cups/vane motion test still pending. See [§14](#14-build-log) r18–r27 |
 | **Repository** | `Hardware/EnviroNode-WL55` (private) |
 
 ---
@@ -824,9 +824,9 @@ what a "power-cycle test" is actually proving.
 > node, DevEUI `0080E115061BF803`, JoinEUI all-zero, LoRaWAN 1.0.4 /
 > RP002-1.0.3 / AU915 FSB2. A real AppKey was generated and provisioned into
 > the node over the console on 2026-08-25 (flash + backup registers; the key
-> itself is deliberately not recorded here — `info` prints it). Gateway plan
-> (hardware, location, administrator): still to be recorded; no join has
-> succeeded yet.
+> itself is deliberately not recorded here — `info` prints it). **First OTAA join succeeded 2026-08-25** —
+> a TTN gateway on `au1` is within range of the bench (which gateway, and
+> the project's own gateway plan, still to be recorded).
 
 **Procedure 8.2 — Load the keys into the node**
 
