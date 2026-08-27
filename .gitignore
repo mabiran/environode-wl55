@@ -30,3 +30,8 @@ Base_Shield_V2_WiKi.pdf
 *LWS*.pdf
 
 # Keep: CMakeLists.txt, CMakePresets.json, cmake/, flash.ps1, source, docs
+dashboard/.venv/
+dashboard/.streamlit/secrets.toml
+dashboard/__pycache__/
+__pycache__/
+*.pyc
