@@ -478,23 +478,24 @@ def sget(x, k, r=None):
     return None if v is None or (isinstance(v, float) and pd.isna(v)) else (round(v, r) if r is not None and isinstance(v, (int, float)) else v)
 
 
-# ---- sidebar: connection ----
+# ---- connection: read from secrets/env ONLY (never shown or entered in the UI) ----
+region = secret("TTN_REGION", DEFAULT_REGION)
+app_id = secret("TTN_APP_ID", "geoenvironode")
+dev_id = secret("TTN_DEVICE_ID", "envnode-01")
+gw_id = secret("TTN_GATEWAY_ID", "")
+api_key = secret("TTN_API_KEY", "")
+
 st.sidebar.subheader("EnviroNode-WL55")
-st.sidebar.caption("Remote control via The Things Network")
-region = st.sidebar.text_input("Region", secret("TTN_REGION", DEFAULT_REGION))
-app_id = st.sidebar.text_input("Application", secret("TTN_APP_ID", "geoenvironode"))
-dev_id = st.sidebar.text_input("Device", secret("TTN_DEVICE_ID", "envnode-01"))
-gw_id = st.sidebar.text_input("Gateway (optional)", secret("TTN_GATEWAY_ID", ""))
-api_key = st.sidebar.text_input("API key", secret("TTN_API_KEY", ""), type="password",
-                                help="Full TTN key: NNSXS.<id>.<secret> — not just the key ID.")
+st.sidebar.caption(f"{dev_id} @ {app_id} · {region}")   # non-secret context only
 history_n = st.sidebar.slider("History depth", 10, 200, 50, 10)
 st.sidebar.caption("Class A: commands apply after the node's next uplink "
                    "(up to one interval).")
 
 if not api_key:
     st.title("EnviroNode-WL55")
-    st.info("Enter your full TTN **API key** (`NNSXS.…`) in the sidebar to connect. "
-            "Nothing is stored.")
+    st.error("No **TTN_API_KEY** configured. Set it as a Space **secret** "
+             "(Settings → Variables and secrets), or locally in "
+             "`.streamlit/secrets.toml`. The key is never entered in this UI.")
     st.stop()
 
 ttn = TTN(region, app_id, dev_id, api_key, gw_id)
@@ -739,7 +740,8 @@ uplink. The node's current selection cannot be read back over the air
 (`get_config` is unimplemented) — the status byte shows which sensors reported
 OK, not which are selected.
 
-**Credentials** — sidebar, environment variables, or Streamlit secrets. The
+**Credentials** — Streamlit secrets (Space secrets on HF) or environment
+variables; never entered in this UI. The
 API key must be the full `NNSXS.<id>.<secret>` string, not just the key ID.
 See `SECRETS.txt`.
 """)
