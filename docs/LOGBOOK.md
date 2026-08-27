@@ -1641,6 +1641,11 @@ the counter at 1 and the node had to burn ~19 rejected attempts (~20 min at
 the 60 s retry) before TTN would accept it again, and one attempt more after
 every future reset.
 
+**Confirmed by the node itself before the fix was flashed:** it rejoined at
+13:48:54 — the 19th attempt after the 13:30:54 reset — and TTN's Join
+Server then read `last_dev_nonce: 19`, `last_join_nonce: 2`, new DevAddr.
+Eighteen minutes of silent rejection, exactly as the theory predicted.
+
 **Fixes.**
 1. `OnJoinRequest()` (CM0+ `lora_app.c`) now schedules `StoreContext` after
    every successful join — the context, DevNonce included, lands in the
