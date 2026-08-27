@@ -861,6 +861,12 @@ static void OnJoinRequest(LmHandlerJoinParams_t *joinParams)
       /* KoreroNet: tell CM4 (and thus the Pi) we joined, so it can send. */
       if (KORERO_MAILBOX->magic == KORERO_MB_MAGIC) { KORERO_MAILBOX->joined = 1u; }
 
+      /* EnviroNode r31: persist the LoRaMAC context (incl. the LoRaWAN-1.0.4
+         DevNonce counter) after every successful join. Without this the nonce
+         restarted at 1 on each reset and TTN silently rejected every join as a
+         replay until the counter climbed past its last accepted value - the
+         ST example only stored context on a button press. */
+      UTIL_SEQ_SetTask((1 << CFG_SEQ_Task_LoRaStoreContextEvent), CFG_SEQ_Prio_0);
       APP_LOG(TS_OFF, VLEVEL_M, "\r\n###### = JOINED = ");
       if (joinParams->Mode == ACTIVATION_TYPE_ABP)
       {

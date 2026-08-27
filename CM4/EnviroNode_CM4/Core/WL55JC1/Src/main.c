@@ -1206,7 +1206,7 @@ static int EnvNode_UplinkNow(void)
     return 1;
   }
   UART1_Send((mb->status == KORERO_ST_NOJOIN) ? "ERR: not joined yet\r\n"
-                                              : "ERR: radio busy / duty cycle\r\n");
+                                              : "ERR: uplink refused by radio core (not joined yet, or MAC busy)\r\n");
   return 0;
 }
 

@@ -12,7 +12,7 @@
 | | |
 |---|---|
 | **Document** | EnviroNode-WL55 Build Logbook & Replication Manual |
-| **Revision** | r30 — 2026-08-25 |
+| **Revision** | r31 — 2026-08-27 |
 | **Node platform** | NUCLEO-WL55JC1 (STM32WL55JC, dual-core) + Seeed Grove Base Shield V2 |
 | **Firmware** | `EnviroNode_CM4` (application) + `EnviroNode_CM0PLUS` (radio), v2.5 |
 | **Build state** | Both cores build green (clean build, CM4 warning-free) — see [§5](#5-building-and-flashing) |
@@ -1621,6 +1621,49 @@ good argument for documenting mechanisms rather than asserting them.
 **Replicator impact:** none if you send binary commands on FPort 10 or config
 strings on any port ≥ 4, which is what the cookbook already recommends. Ports 2
 and 3 now behave like the rest.
+
+### 2026-08-27 — "JOIN FAILED" after a reset: DevNonce replay, context now persisted (r31)
+
+**Symptom.** Two days after the first successful join, a press of the reset
+button left the node unable to rejoin: every cycle `TX … DR 2` → both RX
+windows time out → `JOIN FAILED`, plus the misleading app line `ERR: radio
+busy / duty cycle`. Keys, config and the gateway were all fine — the TTN
+gateway API showed `geoenvirosense01` connected and receiving the node's
+join requests that very minute (`uplink_count` climbing).
+
+**Root cause — LoRaWAN 1.0.4 DevNonce replay protection.** TTN's Join Server
+records the last accepted DevNonce (`last_dev_nonce: 18` from the 25th,
+read via `GET /api/v3/js/applications/geoenvironode/devices/envnode-01`) and
+silently rejects any join request whose nonce is not higher. On the CM0+ the
+LoRaMAC context — which holds that counter — was **only ever stored on a
+press of user button B3** (an ST-example leftover), so every reset restarted
+the counter at 1 and the node had to burn ~19 rejected attempts (~20 min at
+the 60 s retry) before TTN would accept it again, and one attempt more after
+every future reset.
+
+**Fixes.**
+1. `OnJoinRequest()` (CM0+ `lora_app.c`) now schedules `StoreContext` after
+   every successful join — the context, DevNonce included, lands in the
+   CM0+ NVM page (`0x0803F000`) and is restored at boot, so the counter is
+   monotonic across resets. (Stored on success only: rare, so negligible
+   flash wear; a reset between a TTN-accepted join and the store is the one
+   residual edge case.)
+2. **TTN device setting "Resets join nonces" = on** (Device → General
+   settings → Join settings). Belt-and-braces: with it on, TTN accepts nonce
+   reuse and a node can rejoin instantly after *any* reset, including one
+   before the first stored context. The API key's rights
+   (view/traffic/downlink) cannot set it — it needs "Edit devices"; done in
+   the console.
+3. The app's `ERR: radio busy / duty cycle` (inherited wording; AU915 has no
+   duty-cycle limit) now reads `ERR: uplink refused by radio core (not joined
+   yet, or MAC busy)`.
+
+**Diagnostic recipe that worked, for the record** (API key with
+read-traffic + view-devices rights): `GET …/js/applications/<app>/devices/<dev>?field_mask=last_dev_nonce`
+shows what TTN will accept; `GET …/gs/gateways/<gw>/connection/stats` shows
+whether the gateway is up and when it last heard the node. Both answer in
+seconds what a serial log cannot: *the request left the node and was heard —
+the accept was withheld.*
 
 ### 2026-08-25 — First end-to-end LoRaWAN: join, decoded uplinks, downlink applied (r30)
 

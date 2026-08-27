@@ -103,6 +103,8 @@ read-protected, regress RDP on ST-Link-USB-only power (see KoreroNet manual).
       downlinked `{?}` is answered on the console only).
 - [x] **LoRaWAN end to end verified 2026-08-25** (TTN app `geoenvironode`, gateway
       `geoenvirosense01`): join, decoded uplinks, `{15}` downlink applied (r30).
+- [x] DevNonce/context persisted on CM0+ after each join (r31) — a reset no longer
+      strands the node in JOIN FAILED; TTN "Resets join nonces" should also be ON.
 - [ ] 7911 wind cups-spin / vane-motion test still pending. BME280 contact
       issues mitigated in firmware (I²C2 @100 kHz + automatic bus recovery,
       r23). 10HS, rain, PT1000 divider, INA219 all live-verified.
