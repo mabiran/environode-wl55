@@ -202,6 +202,25 @@ def b64(b):
     return base64.b64encode(b).decode("ascii")
 
 
+# 1S Li-ion voltage -> state-of-charge %, identical to the node firmware
+# (main.c soc_from_voltage, r24). 0% floors at 3.30 V, never at 0 V.
+_SOC_CURVE = [(4.20, 100.0), (4.10, 90.0), (4.00, 78.0), (3.90, 62.0),
+              (3.80, 45.0), (3.70, 28.0), (3.60, 12.0), (3.30, 0.0)]
+
+
+def soc_from_voltage(v):
+    if v is None:
+        return None
+    if v >= _SOC_CURVE[0][0]:
+        return 100.0
+    if v <= _SOC_CURVE[-1][0]:
+        return 0.0
+    for (v1, p1), (v2, p2) in zip(_SOC_CURVE, _SOC_CURVE[1:]):
+        if v2 <= v <= v1:
+            return round(p2 + (p1 - p2) * (v - v2) / (v1 - v2), 1)
+    return None
+
+
 # ===========================================================================
 # SELF-TEST (pure Python; no Streamlit, no network) — python app.py --selftest
 # ===========================================================================
@@ -251,6 +270,13 @@ def _run_selftest():
     check("reboot -> 07", hexstr(enc_reboot()[0]), "07")
     check("cfg {15} port", enc_config_string("{15}")[1], CONFIG_FPORT)
     check("cfg {15} bytes", hexstr(enc_config_string("{15}")[0]), "7B31357D")
+
+    print("soc:")
+    check("soc 4.20 -> 100", soc_from_voltage(4.20), 100.0)
+    check("soc 3.30 -> 0", soc_from_voltage(3.30), 0.0)
+    check("soc 3.90 -> 62", soc_from_voltage(3.90), 62.0)
+    check("soc 2.50 floors 0", soc_from_voltage(2.50), 0.0)
+    check("soc None", soc_from_voltage(None), None)
 
     print("builders:")
     check("build replace", build_config_string(["T1", "T2"], 15), "{T1,T2,15}")
@@ -427,33 +453,53 @@ def fmt_time(iso):
         return iso
 
 
-st.set_page_config(page_title="EnviroNode-WL55", page_icon="🌱", layout="wide")
+st.set_page_config(page_title="EnviroNode-WL55", layout="wide")
+
+# Minimal, modern chrome: hide Streamlit's menu/footer/header, constrain width,
+# quiet the type scale. No emoji anywhere.
+st.markdown(
+    """
+    <style>
+      #MainMenu, footer, header {visibility: hidden;}
+      .block-container {max-width: 1080px; padding-top: 2.2rem; padding-bottom: 3rem;}
+      h1, h2, h3 {font-weight: 600; letter-spacing: -0.01em;}
+      [data-testid="stMetricValue"] {font-weight: 600;}
+      .stTabs [data-baseweb="tab"] {font-weight: 500;}
+      hr {margin: 0.9rem 0;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+def sget(x, k, r=None):
+    """Safe get from a pandas Series -> None when missing/NaN."""
+    v = x.get(k)
+    return None if v is None or (isinstance(v, float) and pd.isna(v)) else (round(v, r) if r is not None and isinstance(v, (int, float)) else v)
+
 
 # ---- sidebar: connection ----
-st.sidebar.title("🌱 EnviroNode-WL55")
+st.sidebar.subheader("EnviroNode-WL55")
 st.sidebar.caption("Remote control via The Things Network")
-region = st.sidebar.text_input("TTN region / cluster", secret("TTN_REGION", DEFAULT_REGION))
-app_id = st.sidebar.text_input("Application ID", secret("TTN_APP_ID", "geoenvironode"))
-dev_id = st.sidebar.text_input("Device ID", secret("TTN_DEVICE_ID", "envnode-01"))
-gw_id = st.sidebar.text_input("Gateway ID (optional)", secret("TTN_GATEWAY_ID", ""))
-api_key = st.sidebar.text_input("TTN API key", secret("TTN_API_KEY", ""), type="password",
-                                help="NNSXS.... Needs: read traffic, write downlink, view devices.")
-st.sidebar.divider()
-history_n = st.sidebar.slider("History depth (uplinks)", 10, 200, 50, 10)
-st.sidebar.caption("Class A: a downlink is delivered in the RX window after the "
-                   "node's next uplink — up to one interval of latency.")
+region = st.sidebar.text_input("Region", secret("TTN_REGION", DEFAULT_REGION))
+app_id = st.sidebar.text_input("Application", secret("TTN_APP_ID", "geoenvironode"))
+dev_id = st.sidebar.text_input("Device", secret("TTN_DEVICE_ID", "envnode-01"))
+gw_id = st.sidebar.text_input("Gateway (optional)", secret("TTN_GATEWAY_ID", ""))
+api_key = st.sidebar.text_input("API key", secret("TTN_API_KEY", ""), type="password",
+                                help="Full TTN key: NNSXS.<id>.<secret> — not just the key ID.")
+history_n = st.sidebar.slider("History depth", 10, 200, 50, 10)
+st.sidebar.caption("Class A: commands apply after the node's next uplink "
+                   "(up to one interval).")
 
 if not api_key:
-    st.info("Enter your TTN **API key** in the sidebar (or set the `TTN_API_KEY` "
-            "secret / environment variable) to connect. Nothing is stored by this app.")
+    st.title("EnviroNode-WL55")
+    st.info("Enter your full TTN **API key** (`NNSXS.…`) in the sidebar to connect. "
+            "Nothing is stored.")
     st.stop()
 
 ttn = TTN(region, app_id, dev_id, api_key, gw_id)
 
-tab_status, tab_data, tab_control, tab_advanced, tab_help = st.tabs(
-    ["📊 Status", "📈 Live data", "🎛️ Control", "🧰 Advanced / raw", "❓ Help"])
-
-# fetch history once per rerun (shared by Status + Live data)
+# fetch once per run
 ok_up, uplinks = ttn.storage_uplinks(history_n)
 rows = [parse_uplink_row(r) for r in uplinks] if ok_up else []
 df = pd.DataFrame(rows)
@@ -461,255 +507,239 @@ if not df.empty:
     df["time"] = pd.to_datetime(df["time"], errors="coerce", utc=True)
     df = df.dropna(subset=["time"]).sort_values("time")
 
-# ---- Status ----
+tab_status, tab_data, tab_control, tab_advanced, tab_help = st.tabs(
+    ["Status", "Data", "Control", "Advanced", "Help"])
+
+# ===========================================================================
+# Status
+# ===========================================================================
 with tab_status:
-    c1, c2 = st.columns([2, 1])
-    with c1:
-        st.subheader("Latest reading")
-        if not ok_up:
-            st.error(uplinks)
-        elif df.empty:
-            st.warning("No stored uplinks yet.")
-        else:
-            last = df.iloc[-1]
-            age = (pd.Timestamp.now(tz="UTC") - last["time"]).total_seconds()
-            st.caption(f"received {fmt_time(str(last['time']))}  ·  "
-                       f"{int(age)}s ago  ·  FCnt {last.get('fcnt')}  ·  "
-                       f"{last.get('gateway')}  ·  RSSI {last.get('rssi')} dBm  ·  "
-                       f"SNR {last.get('snr')} dB  ·  SF{last.get('sf')}")
-            if last.get("fault"):
-                st.warning("⚠️ Fault bit set — a selected sensor failed this frame "
-                           "(a blank field below = not measured, not zero).")
-            g = st.columns(4)
+    top = st.columns([3, 1])
+    top[0].title("EnviroNode-WL55")
+    if top[1].button("Refresh", use_container_width=True):
+        st.rerun()
 
-            def metric(col, label, val, unit=""):
-                col.metric(label, "—" if val is None or (isinstance(val, float) and pd.isna(val))
-                           else f"{val}{unit}")
+    if not ok_up:
+        st.error(uplinks)
+    elif df.empty:
+        st.warning("No stored uplinks yet.")
+    else:
+        last = df.iloc[-1]
+        age = (pd.Timestamp.now(tz="UTC") - last["time"]).total_seconds()
+        soc = soc_from_voltage(sget(last, "batt_V"))
+        st.caption(
+            f"Last uplink {fmt_time(str(last['time']))} · {int(age)}s ago · "
+            f"FCnt {sget(last, 'fcnt')} · {sget(last, 'gateway') or '—'} · "
+            f"RSSI {sget(last, 'rssi')} dBm · SNR {sget(last, 'snr')} dB · "
+            f"SF{sget(last, 'sf')}"
+        )
+        if last.get("fault"):
+            st.warning("Fault flag set — a selected sensor failed this frame "
+                       "(a blank field below means not measured, not zero).")
 
-            metric(g[0], "Battery", round(last.get("batt_V"), 3) if pd.notna(last.get("batt_V")) else None, " V")
-            metric(g[1], "Current", int(last["batt_mA"]) if pd.notna(last.get("batt_mA")) else None, " mA")
-            metric(g[2], "Air #1", round(last.get("air1_t"), 1) if pd.notna(last.get("air1_t")) else None, " °C")
-            metric(g[3], "Air #2", round(last.get("air2_t"), 1) if pd.notna(last.get("air2_t")) else None, " °C")
-            g2 = st.columns(4)
-            metric(g2[0], "Soil moisture", int(last["soil_moisture"]) if pd.notna(last.get("soil_moisture")) else None, " cts")
-            metric(g2[1], "Soil temp", round(last.get("soil_temp"), 2) if pd.notna(last.get("soil_temp")) else None, " °C")
-            metric(g2[2], "Leaf wetness", int(last["leaf_wetness"]) if pd.notna(last.get("leaf_wetness")) else None, " cts")
-            metric(g2[3], "Wind dir", round(last.get("wind_dir"), 1) if pd.notna(last.get("wind_dir")) else None, "°")
-            g3 = st.columns(4)
-            metric(g3[0], "Wind speed", round(last.get("wind_speed"), 2) if pd.notna(last.get("wind_speed")) else None, " m/s")
-            metric(g3[1], "Wind gust", round(last.get("wind_gust"), 2) if pd.notna(last.get("wind_gust")) else None, " m/s")
-            metric(g3[2], "Rain tips", int(last["rain_tips"]) if pd.notna(last.get("rain_tips")) else None, "")
-            metric(g3[3], "Rain", round(last.get("rain_mm"), 2) if pd.notna(last.get("rain_mm")) else None, " mm")
-            st.caption(f"status byte 0x{int(last['status']):02X}"
-                       if pd.notna(last.get("status")) else "")
-    with c2:
-        st.subheader("Network")
-        ok_j, ji = ttn.join_info()
-        if ok_j:
-            st.write(f"**DevAddr** {ji.get('ids', {}).get('dev_addr', '-')}")
-            st.write(f"**Last DevNonce** {ji.get('last_dev_nonce', '-')}")
-            st.write(f"**Resets join nonces** {ji.get('resets_join_nonces', False)}")
-        else:
-            st.caption(f"join info: {ji}")
-        if gw_id:
-            ok_g, gs = ttn.gateway_stats()
-            if ok_g:
-                st.write(f"**Gateway** {gw_id}")
-                st.write(f"connected: {fmt_time(gs.get('connected_at'))}")
-                st.write(f"last uplink: {fmt_time(gs.get('last_uplink_received_at'))}")
-                st.write(f"uplinks: {gs.get('uplink_count')}  ·  downlinks: {gs.get('downlink_count')}")
-            else:
-                st.caption(f"gateway: {gs}")
-        if st.button("🔄 Refresh", use_container_width=True):
-            st.rerun()
+        # headline metrics
+        m = st.columns(4)
+        m[0].metric("Battery", f"{soc:.0f} %" if soc is not None else "—",
+                    f"{sget(last, 'batt_V', 2)} V" if sget(last, "batt_V") is not None else None)
+        cur = sget(last, "batt_mA")
+        m[1].metric("Current", f"{int(cur)} mA" if cur is not None else "—",
+                    "charging" if (cur is not None and cur < 0) else ("discharging" if cur is not None else None),
+                    delta_color="off")
+        m[2].metric("Air", f"{sget(last, 'air1_t', 1)} °C" if sget(last, "air1_t") is not None else "—",
+                    f"{sget(last, 'air1_rh', 0)} %RH" if sget(last, "air1_rh") is not None else None,
+                    delta_color="off")
+        m[3].metric("Soil temp", f"{sget(last, 'soil_temp', 1)} °C" if sget(last, "soil_temp") is not None else "—")
 
-# ---- Live data ----
+        # battery charge bar
+        if soc is not None:
+            st.progress(int(soc), text=f"State of charge {soc:.0f}% "
+                        f"(1S Li-ion, 3.30 V = 0%, 4.20 V = 100%)")
+
+        with st.expander("All channels"):
+            def line(label, val, unit=""):
+                st.write(f"**{label}**  {('—' if val is None else str(val) + unit)}")
+            c = st.columns(2)
+            with c[0]:
+                line("Air #1", f"{sget(last,'air1_t',2)} °C / {sget(last,'air1_rh',0)} %RH / {sget(last,'air1_p',1)} hPa")
+                line("Air #2", f"{sget(last,'air2_t',2)} °C / {sget(last,'air2_rh',0)} %RH / {sget(last,'air2_p',1)} hPa")
+                line("Soil moisture", sget(last, "soil_moisture"), " cts")
+                line("Leaf wetness", sget(last, "leaf_wetness"), " cts")
+                line("Soil temperature", sget(last, "soil_temp", 2), " °C")
+            with c[1]:
+                line("Wind speed", sget(last, "wind_speed", 2), " m/s")
+                line("Wind gust", sget(last, "wind_gust", 2), " m/s")
+                line("Wind direction", sget(last, "wind_dir", 1), "°")
+                line("Rain", f"{sget(last,'rain_tips')} tips / {sget(last,'rain_mm',2)} mm")
+                st.write(f"**Status byte**  0x{int(last['status']):02X}"
+                         if pd.notna(last.get("status")) else "**Status byte**  —")
+
+        with st.expander("Network"):
+            ok_j, ji = ttn.join_info()
+            if ok_j:
+                st.write(f"DevAddr {ji.get('ids', {}).get('dev_addr', '—')} · "
+                         f"last DevNonce {ji.get('last_dev_nonce', '—')} · "
+                         f"resets nonces {ji.get('resets_join_nonces', False)}")
+            if gw_id:
+                ok_g, gs = ttn.gateway_stats()
+                if ok_g:
+                    st.write(f"Gateway {gw_id} · last uplink {fmt_time(gs.get('last_uplink_received_at'))} · "
+                             f"{gs.get('uplink_count')} up / {gs.get('downlink_count')} down")
+
+# ===========================================================================
+# Data
+# ===========================================================================
 with tab_data:
     if df.empty:
         st.warning("No data to chart yet.")
     else:
-        st.subheader("Time series")
         idx = df.set_index("time")
-        pairs = [
-            ("Air temperature (°C)", ["air1_t", "air2_t", "soil_temp"]),
+        charts = [
+            ("Temperature (°C)", ["air1_t", "air2_t", "soil_temp"]),
+            ("Battery state of charge (%)", None),  # computed below
             ("Humidity (%RH)", ["air1_rh", "air2_rh"]),
-            ("Pressure (hPa)", ["air1_p", "air2_p"]),
-            ("Soil / leaf (counts)", ["soil_moisture", "leaf_wetness"]),
             ("Battery (V)", ["batt_V"]),
-            ("Battery current (mA, + = discharge)", ["batt_mA"]),
-            ("Wind (m/s / °)", ["wind_speed", "wind_gust", "wind_dir"]),
-            ("Rain (mm)", ["rain_mm"]),
-            ("Link (RSSI dBm / SNR dB)", ["rssi", "snr"]),
+            ("Soil / leaf (counts)", ["soil_moisture", "leaf_wetness"]),
+            ("Battery current (mA)", ["batt_mA"]),
+            ("Wind (m/s · °)", ["wind_speed", "wind_gust", "wind_dir"]),
+            ("Link (RSSI dBm · SNR dB)", ["rssi", "snr"]),
         ]
         cols = st.columns(2)
-        for i, (title, series) in enumerate(pairs):
-            have = [s for s in series if s in idx.columns and idx[s].notna().any()]
-            if have:
-                with cols[i % 2]:
-                    st.caption(title)
-                    st.line_chart(idx[have])
-        st.subheader("Table")
+        for i, (title, series) in enumerate(charts):
+            with cols[i % 2]:
+                st.caption(title)
+                if series is None:
+                    socs = idx["batt_V"].map(soc_from_voltage) if "batt_V" in idx else None
+                    if socs is not None and socs.notna().any():
+                        st.line_chart(socs.rename("soc_%"))
+                else:
+                    have = [s for s in series if s in idx.columns and idx[s].notna().any()]
+                    if have:
+                        st.line_chart(idx[have])
+        st.divider()
         st.dataframe(df.iloc[::-1], use_container_width=True, height=280)
-        st.download_button("⬇️ Download CSV", df.to_csv(index=False).encode(),
+        st.download_button("Download CSV", df.to_csv(index=False).encode(),
                            file_name=f"{dev_id}_uplinks.csv", mime="text/csv")
 
-# ---- Control ----
-with tab_control:
-    st.caption("Every command below is queued as a **downlink** and applied after "
-               "the node's next uplink. The node persists the change in flash.")
-    cc1, cc2 = st.columns(2)
+# ===========================================================================
+# Control
+# ===========================================================================
+def _send(payload, fport, label):
+    ok, msg = ttn.push_downlink(payload, fport)
+    (st.success if ok else st.error)(f"{label}: {msg}")
 
-    with cc1:
-        st.subheader("Sensor set + interval")
-        st.write("Choose which sensors run and how often, then send as one config string.")
-        cols = st.columns(2)
+
+with tab_control:
+    st.caption("Each control queues a downlink; the node applies it after its "
+               "next uplink and persists it in flash.")
+    left, right = st.columns(2)
+
+    with left:
+        st.subheader("Sensors & interval")
+        grid = st.columns(2)
         chosen = []
         for i, (k, _bit, label) in enumerate(SENSOR_KEYS):
-            default_on = k not in ("R",)  # R blocks sleep; off by default
-            if cols[i % 2].checkbox(f"{k} — {label}", value=default_on, key=f"sel_{k}"):
+            if grid[i % 2].checkbox(f"{k} · {label}", value=(k != "R"), key=f"sel_{k}"):
                 chosen.append(k)
-        interval = st.number_input("Interval (minutes, 1–999)", INTERVAL_MIN, INTERVAL_MAX,
-                                   value=15, step=1)
+        interval = st.number_input("Interval (min)", INTERVAL_MIN, INTERVAL_MAX, 15, 1)
         cfg = build_config_string(chosen if chosen else ["NONE"], interval)
         if not chosen:
-            st.warning("No sensors selected -> sends {NONE,...}: pauses all "
-                       "measurements (battery is still reported).")
+            st.caption("No sensors selected — sends {NONE,…}, pausing measurements "
+                       "(battery still reported).")
         st.code(cfg, language="text")
-        st.caption(f"bytes {hexstr(cfg.encode())} · base64 {b64(cfg.encode())} · FPort {CONFIG_FPORT}")
-        if st.button("📤 Send sensor set", type="primary", use_container_width=True):
-            payload, fport = enc_config_string(cfg)
-            ok, msg = ttn.push_downlink(payload, fport)
-            (st.success if ok else st.error)(f"{cfg}: {msg}")
+        if st.button("Send sensor set", type="primary", use_container_width=True):
+            _send(*enc_config_string(cfg), cfg)
 
-        st.divider()
-        st.write("Or change **only the interval** (keeps the current set):")
-        iv = st.number_input("Interval only", INTERVAL_MIN, INTERVAL_MAX, value=15, step=1, key="ivonly")
-        if st.button("📤 Set interval", use_container_width=True):
-            payload, fport = enc_config_string("{" + str(int(iv)) + "}")
-            ok, msg = ttn.push_downlink(payload, fport)
-            (st.success if ok else st.error)(f"{{{int(iv)}}}: {msg}")
-
-    with cc2:
+    with right:
         st.subheader("Actions")
-        if st.button("📡 Uplink now (force a reading)", use_container_width=True):
-            ok, msg = ttn.push_downlink(*enc_uplink_now())
-            (st.success if ok else st.error)(f"uplink_now: {msg}")
-        if st.button("🌧️ Reset rain accumulator", use_container_width=True):
-            ok, msg = ttn.push_downlink(*enc_reset_rain())
-            (st.success if ok else st.error)(f"reset_rain: {msg}")
-        with st.expander("♻️ Reboot the node"):
-            st.warning("Reboots the CM4 application core.")
+        if st.button("Uplink now", use_container_width=True):
+            _send(*enc_uplink_now(), "uplink now")
+        if st.button("Reset rain counter", use_container_width=True):
+            _send(*enc_reset_rain(), "reset rain")
+        with st.expander("Calibration & alignment"):
+            sid = st.selectbox("Sensor", CAL_SENSORS, format_func=lambda x: x[1])
+            off = st.number_input("Offset (added, eng. units)", -300.0, 300.0, 0.0, 0.01)
+            if st.button("Send calibration", use_container_width=True):
+                _send(*enc_set_cal(sid[0], round(off * 100)), f"cal {sid[0]} {off:+}")
+            deg = st.number_input("Wind-vane north offset (°)", 0.0, 359.9, 0.0, 0.1)
+            if st.button("Send vane offset", use_container_width=True):
+                _send(*enc_set_winddir_offset(round(deg * 10)), f"vane {deg}°")
+        with st.expander("Reboot"):
+            st.caption("Restarts the application core.")
             if st.button("Confirm reboot", use_container_width=True):
-                ok, msg = ttn.push_downlink(*enc_reboot())
-                (st.success if ok else st.error)(f"reboot: {msg}")
+                _send(*enc_reboot(), "reboot")
 
-        st.divider()
-        st.subheader("Wind-vane north offset")
-        deg = st.number_input("Offset (degrees, added to raw vane angle)", 0.0, 359.9, 0.0, 0.1)
-        if st.button("📤 Set vane offset", use_container_width=True):
-            ok, msg = ttn.push_downlink(*enc_set_winddir_offset(round(deg * 10)))
-            (st.success if ok else st.error)(f"winddir_offset {deg}°: {msg}")
-
-        st.divider()
-        st.subheader("Calibration offset")
-        sid = st.selectbox("Sensor", CAL_SENSORS, format_func=lambda x: x[1])
-        off = st.number_input("Offset (engineering units, added)", -300.0, 300.0, 0.0, 0.01)
-        st.caption(f"encoded as ×100 = {int(round(off * 100))}")
-        if st.button("📤 Send calibration", use_container_width=True):
-            ok, msg = ttn.push_downlink(*enc_set_cal(sid[0], round(off * 100)))
-            (st.success if ok else st.error)(f"set_cal {sid[0]} {off:+}: {msg}")
-
-# ---- Advanced / raw ----
+# ===========================================================================
+# Advanced
+# ===========================================================================
 with tab_advanced:
     st.subheader("Raw config string")
     raw = st.text_input("Config string", value="{?}",
-                        help="Any {…}. Examples: {ALL,15} {NONE} {+R} {-LW,-WD} {5}. "
-                             "'{?}' asks the node to print its set — console only, no uplink reply.")
+                        help="Any {…}. e.g. {ALL,15} {NONE} {+R} {-LW,-WD} {5}. "
+                             "{?} asks the node to print its set (console only).")
     if st.button("Send config string"):
         try:
             payload, fport = enc_config_string(raw)
-            ok, msg = ttn.push_downlink(payload, fport)
-            (st.success if ok else st.error)(f"{raw} -> FPort {fport}, {hexstr(payload)}: {msg}")
+            _send(payload, fport, f"{raw} -> {hexstr(payload)}")
         except ValueError as e:
             st.error(str(e))
 
     st.divider()
     st.subheader("Raw binary downlink")
-    rc1, rc2 = st.columns(2)
-    fport = rc1.number_input("FPort", 1, 223, COMMAND_FPORT)
-    hexin = rc2.text_input("Payload (hex)", value="02", help="e.g. 010F00 = set interval 15")
+    rc = st.columns([1, 3])
+    fport = rc[0].number_input("FPort", 1, 223, COMMAND_FPORT)
+    hexin = rc[1].text_input("Payload (hex)", "02", help="e.g. 010F00 = set interval 15")
     if st.button("Send raw bytes"):
         try:
-            payload = bytes.fromhex(hexin.replace(" ", ""))
-            ok, msg = ttn.push_downlink(payload, int(fport))
-            (st.success if ok else st.error)(f"FPort {int(fport)} {hexstr(payload)}: {msg}")
+            _send(bytes.fromhex(hexin.replace(" ", "")), int(fport), f"FPort {int(fport)} {hexin}")
         except ValueError:
             st.error("payload must be valid hex")
 
     st.divider()
-    st.subheader("set_enable mask (FPort 10, cmd 0x06)")
-    mcols = st.columns(4)
-    mkeys = []
-    for i, (k, _bit, label) in enumerate(SENSOR_KEYS):
-        if mcols[i % 4].checkbox(k, value=(k != "R"), key=f"mask_{k}"):
-            mkeys.append(k)
+    st.subheader("Enable mask (FPort 10, 0x06)")
+    mg = st.columns(4)
+    mkeys = [k for i, (k, _b, _l) in enumerate(SENSOR_KEYS) if mg[i % 4].checkbox(k, value=(k != "R"), key=f"mask_{k}")]
     mask = mask_from_keys(mkeys)
-    st.caption(f"mask 0x{mask:02X} · bytes {hexstr(enc_set_enable(mask)[0])}")
-    if st.button("Send set_enable mask"):
-        ok, msg = ttn.push_downlink(*enc_set_enable(mask))
-        (st.success if ok else st.error)(f"set_enable 0x{mask:02X}: {msg}")
+    st.caption(f"mask 0x{mask:02X} · {hexstr(enc_set_enable(mask)[0])}")
+    if st.button("Send mask"):
+        _send(*enc_set_enable(mask), f"set_enable 0x{mask:02X}")
 
     st.divider()
     st.subheader("Downlink queue")
     okq, q = ttn.queue()
-    if okq:
-        if q:
-            st.dataframe(pd.DataFrame([{
-                "f_port": d.get("f_port"),
-                "hex": hexstr(base64.b64decode(d.get("frm_payload", ""))) if d.get("frm_payload") else "",
-                "confirmed": d.get("confirmed", False),
-            } for d in q]), use_container_width=True)
-        else:
-            st.caption("queue empty")
+    if okq and q:
+        st.dataframe(pd.DataFrame([{
+            "f_port": d.get("f_port"),
+            "hex": hexstr(base64.b64decode(d.get("frm_payload", ""))) if d.get("frm_payload") else "",
+        } for d in q]), use_container_width=True)
     else:
-        st.caption(f"queue: {q}")
-    if st.button("🗑️ Clear queue"):
+        st.caption("queue empty" if okq else f"queue: {q}")
+    if st.button("Clear queue"):
         ok, msg = ttn.clear_queue()
         (st.success if ok else st.error)(msg)
         st.rerun()
 
-# ---- Help ----
+# ===========================================================================
+# Help
+# ===========================================================================
 with tab_help:
     st.markdown("""
-### What this dashboard does
-Monitors and **remotely controls** the EnviroNode-WL55 through The Things Network.
-Uplink data comes from the TTN **Storage integration**; commands are sent as
-Class-A **downlinks**.
+Monitors and remotely controls the EnviroNode-WL55 through The Things Network.
+Uplink data comes from the TTN Storage integration; commands are Class-A
+downlinks the node persists in flash.
 
-### Commands (all persisted in the node's flash)
-| Control | On-air |
-|---|---|
-| Sensor set + interval | config string `{LW,T1,T2,SM,ST,WS,WD[,R],N}` on FPort 1 |
-| Interval only | `{N}` |
-| Uplink now / reset rain / reboot | FPort 10 cmd `0x02` / `0x03` / `0x07` |
-| Wind offset | FPort 10 cmd `0x05` |
-| Calibration | FPort 10 cmd `0x04` |
-| set_enable mask | FPort 10 cmd `0x06` |
+**Sensor keys** — LW leaf · T1/T2 air · SM soil moisture · ST soil temp ·
+WS wind speed · WD wind dir · R rain (R keeps the node awake between cycles).
 
-Keys: LW leaf · T1/T2 air · SM soil moisture · ST soil temp · WS wind speed ·
-WD wind dir · R rain (**R keeps the node awake between cycles**).
+**Battery %** is estimated from pack voltage on the node's own 1S Li-ion curve
+(3.30 V = 0 %, 4.20 V = 100 %); it reads pessimistic under load.
 
-### Latency
-LoRaWAN Class A: the node only listens right after **its own uplink**, so a
-command lands within one interval (up to 15 min on the field setting), and TTN
-delivers one queued item per uplink.
+**Latency** — a command is delivered in the receive window after the node's
+next uplink, so it lands within one interval; TTN sends one queued item per
+uplink. The node's current selection cannot be read back over the air
+(`get_config` is unimplemented) — the status byte shows which sensors reported
+OK, not which are selected.
 
-### Read-back
-The node's *selection* can't be read back over the air yet (`get_config` is
-unimplemented) — the dashboard is command-oriented. The decoded uplink's status
-byte shows which sensors reported OK, not which are selected.
-
-### Credentials
-Set via `st.secrets`, environment variables, or the sidebar. See `SECRETS.txt`.
-Nothing is stored by this app.
+**Credentials** — sidebar, environment variables, or Streamlit secrets. The
+API key must be the full `NNSXS.<id>.<secret>` string, not just the key ID.
+See `SECRETS.txt`.
 """)
