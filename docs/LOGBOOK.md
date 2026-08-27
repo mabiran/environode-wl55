@@ -1034,6 +1034,44 @@ wait — it is not lost.
 | `{T1,T2,ST,60}` | any | `7B54312C54322C53542C36307D` | `e1QxLFQyLFNULDYwfQ==` | air ×2 + soil temp, hourly — may sleep |
 | `{5}` | any | `7B357D` | `ezV9` | change **only** the interval to 5 min |
 | `{+R}` | any | `7B2B527D` | `eytSfQ==` | add rainfall, keep the rest (node stops sleeping) |
+| `{-R}` | any | `7B2D527D` | `ey1SfQ==` | drop rainfall — lets the node sleep again |
+| `{-ST}` | any | `7B2D53547D` | `ey1TVH0=` | drop soil temp (clears the fault bit while the divider is faulty) |
+| `{+ST}` | any | `7B2B53547D` | `eytTVH0=` | add soil temp back |
+| `{-LW,-WD}` | any | `7B2D4C572C2D57447D` | `ey1MVywtV0R9` | drop two sensors in one frame |
+| `{1}` | any | `7B317D` | `ezF9` | 1-minute cycle — **bench only** (TTN fair use) |
+| `{15}` | any | `7B31357D` | `ezE1fQ==` | 15-minute cycle — the field default |
+| `{30}` | any | `7B33307D` | `ezMwfQ==` | 30-minute cycle |
+| `{60}` | any | `7B36307D` | `ezYwfQ==` | hourly |
+| `{?}` | any | `7B3F7D` | `ez99` | report the current set — **answered on the console only** (no diag uplink yet) |
+| `{NONE}` | any | `7B4E4F4E457D` | `e05PTkV9` | pause measuring (battery still reported) |
+| `{T1,T2,SM,ST,60}` | any | `7B54312C54322C534D2C53542C36307D` | `e1QxLFQyLFNNLFNULDYwfQ==` | air ×2 + soil pair, hourly |
+| `{LW,T1,T2,SM,ST,WS,WD,R,15}` | any | `7B4C572C54312C54322C534D2C53542C57532C57442C522C31357D` | `e0xXLFQxLFQyLFNNLFNULFdTLFdELFIsMTV9` | the whole set, 15 min (spelled out — same as `{ALL,15}`) |
+
+With the TTN downlink formatter from PAYLOAD.md installed, all of the above can
+be queued as JSON instead of bytes: `{"config":"{-ST}"}` etc. — verified live
+2026-08-25 (`{15}` applied end to end).
+
+**Table 10b — Binary commands, FPort 10** (`{"cmd":n,"arg":m}` in the
+formatter, or raw bytes; multi-byte arguments little-endian)
+
+| Bytes (hex) | Base64 | Effect |
+|---|---|---|
+| `01 0F 00` | `AQ8A` | set_interval 15 min |
+| `01 3C 00` | `ATwA` | set_interval 60 min |
+| `02` | `Ag==` | uplink_now — sample + transmit at the next opportunity |
+| `03` | `Aw==` | reset_rain — zero the tip accumulator |
+| `06 7F` | `Bn8=` | set_enable mask 0x7F = everything except `R` |
+| `06 FF` | `Bv8=` | set_enable mask 0xFF = everything (`R` blocks sleep) |
+| `06 6F` | `Bm8=` | set_enable 0x6F = everything except `ST` and `R` |
+| `05 3C 00` | `BTwA` | set_winddir_offset 6.0° (deg × 10) |
+| `04 07 E8 03` | `BAfoAw==` | set_cal sensor 7 (soil temp) +10.00 °C (×100 = 1000) |
+| `04 07 18 FC` | `BAcY/A==` | set_cal sensor 7 −10.00 °C (×100 = −1000) |
+| `07` | `Bw==` | reboot |
+
+Mask bits: LW 0x01 · T1 0x02 · T2 0x04 · SM 0x08 · ST 0x10 · WS 0x20 · WD 0x40 · R 0x80.
+Calibration sensor ids: 1 air1 T · 2 air1 RH · 3 air2 T · 4 air2 RH · 5 soil moisture · 6 leaf · 7 soil temp · 8 wind dir.
+Class A: a downlink is delivered only in the receive window after the node's
+**next uplink** — up to one interval of latency; TTN sends one queued item per uplink.
 | `{-LW,-WD}` | any | `7B2D4C572C2D57447D` | `ey1MVywtV0R9` | drop leaf wetness + wind direction |
 | `{NONE}` | any | `7B4E4F4E457D` | `e05PTkV9` | stop measuring; periodic uplinks pause |
 | `{?}` | any | `7B3F7D` | `ez99` | report current config (console only, for now) |
